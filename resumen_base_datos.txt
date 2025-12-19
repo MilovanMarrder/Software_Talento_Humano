@@ -1,0 +1,370 @@
+=== VISIÓN GENERAL DE LA BASE DE DATOS RRHH ===
+
+==================================================
+TABLA: cat_tipos_puesto
+Total de registros: 6
+==================================================
+
+ id_tipo_puesto          nombre_rol descripcion
+              1     Personal Médico        None
+              2      Administrativo        None
+              3 Médico Especialista        None
+              4          Enfermería        None
+              5             Técnico        None
+              6      Administrativo        None
+
+==================================================
+TABLA: sqlite_sequence
+Total de registros: 14
+==================================================
+
+                       name  seq
+           cat_tipos_puesto    6
+          cat_departamentos   10
+                cat_puestos   12
+    cat_unidades_produccion   42
+         cat_tipos_contrato    9
+cat_categorias_inasistencia    4
+     cat_tipos_inasistencia    3
+                  empleados   12
+                  contratos   14
+        distribucion_costos   59
+              inasistencias   23
+               cat_jornadas    3
+          kardex_vacaciones   91
+            cat_grupos_perc   14
+
+==================================================
+TABLA: cat_departamentos
+Total de registros: 10
+==================================================
+
+ id_departamento                        nombre codigo_interno
+               1 Unidad de Cuidados Intensivos            UCI
+               2      Investigación y Docencia            DOC
+               3              Consulta Externa            CEX
+               4               Hospitalización           HOSP
+               5 Unidad de Cuidados Intensivos            UCI
+               6                    Quirófanos            QUI
+               7                Administración            ADM
+               8          Gestión de Pacientes            GDP
+               9            CONTROL DE GESTION            CTG
+              10              GERENCIA GENERAL             GG
+
+==================================================
+TABLA: cat_unidades_produccion
+Total de registros: 36
+==================================================
+
+ id_unidad codigo_up                                      nombre_up
+         7      1444             Consulta Externa Gastroenterologia
+         8       120          Hospitalizacion nefrologia pediatrica
+         9       170        Unidad de cuidados intensivos pediatria
+        10       183       Unidad de cuidados intermedios pediatria
+        11       733          Consulta gastroenterologia pediatrica
+        12       734                  Consulta nutricion pediatrica
+        13       319                  Consulta otorrinolaringologia
+        14       331                 Consulta neurologia pediatrica
+        15       332                 Consulta nefrologia pediatrica
+        16       336               Consulta dermatologia pediatrica
+        17       340             Consulta endocrinologia pediatrica
+        18       739                 Consulta psicologia pediatrica
+        19      1726     Consulta Inmunología y Alergías Pediátrica
+        20      1725  Consulta Cardiología y Hemodinámia Pediátrica
+        21      1727            Consulta Cirugía General Pediátrica
+        22      1728             Consulta Anestesiología Pediatrica
+        23       463                         Quirofanos cardiologia
+        24       923                         Quirofanos hemodinamia
+        25      1731                          Quirófano Miscelaneos
+        26       630                 Apoyo a otros establecimientos
+        27      1730         Hospitalización Miscelaneos Pediátrica
+        28      2088                              Sala de Lactantes
+        29      1743                       Unidad de estabilización
+        30       535                                     Radiologia
+        31       586                            Dialisis peritoneal
+        32       268                                   Hemodialisis
+        33       593                          Servicio farmaceutico
+        34       629                            Cuidados paliativos
+        35       644                                     Ambulancia
+        36       662                      Central de esterilizacion
+        37       712                        Mantenimiento biomedico
+        38       648                                           Aseo
+        39       664                             Transporte general
+        40       665                                  Mantenimiento
+        41      1742 Trabajo social / Unidad de atención al usuario
+        42       670                                 Administracion
+
+==================================================
+TABLA: cat_tipos_contrato
+Total de registros: 3
+==================================================
+
+ id_tipo_contrato    nombre
+                7      HMEP
+                8 LACTANTES
+                9     SESAL
+
+==================================================
+TABLA: cat_categorias_inasistencia
+Total de registros: 4
+==================================================
+
+ id_categoria nombre_categoria
+            1    Incapacidades
+            2       Vacaciones
+            3         Permisos
+            4  Trabajo en Casa
+
+==================================================
+TABLA: cat_puestos
+Total de registros: 11
+==================================================
+
+ id_puesto              nombre_puesto  id_tipo_puesto  id_puesto_supervisor nivel_riesgo  id_grupo_perc  tiene_personal_cargo  id_puesto_jefe  id_departamento
+         1            Director Médico               1                   NaN         None             11                     0             NaN              NaN
+         2            Médico Jefe UCI               1                   1.0         None              1                     0             NaN              NaN
+         3                    Docente               1                   1.0         None             14                     0             NaN              NaN
+         4            Director Médico               1                   NaN         None             11                     0             NaN              NaN
+         5                Jefe de UCI               1                   1.0         None              1                     0             NaN              NaN
+         6         Médico Asistencial               1                   2.0         None              2                     0             NaN              NaN
+         7         Jefa de Enfermería               2                   NaN         None              4                     0             NaN              NaN
+         8     Auxiliar de Enfermería               2                   4.0         None              3                     0             NaN              NaN
+        10     ANALISTA DE LA GESTION               1                   NaN         None             11                     0            11.0              9.0
+        11 GERENTE CONTROL DE GESTIÓN               1                   NaN         None             11                     1             NaN              9.0
+        12           GERENCIA GENERAL               1                   NaN         None             11                     1             NaN             10.0
+
+==================================================
+TABLA: cat_tipos_inasistencia
+Total de registros: 3
+==================================================
+
+ id_tipo              nombre_tipo  id_categoria  remunerado  descuenta_vacaciones cuenta_afectada
+       1         Incapacidad IHSS             1           1                     0         NINGUNA
+       2    Vacaciones Ordinarias             2           1                     0       ORDINARIA
+       3 Vacaciones Profilácticas             2           1                     0         NINGUNA
+
+==================================================
+TABLA: empleados
+Total de registros: 12
+==================================================
+
+ id_empleado  codigo             dni         nombres       apellidos fecha_nacimiento  activo
+           1 MED-001 0801-1990-00123      JUAN PABLO           PÉREZ       1990-05-20       1
+           2  808081     80112873443         PRUEBA1       APROBADO1       1990-12-18       1
+           3  909091   0801199912345      PABLO JUAN    LOPEZ OSORIO       1990-12-16       1
+           4  909092   0501199912345      PABLO JUAN    LOPEZ OSORIO       1990-12-16       1
+           5  909093   1501198012345    MARIA GLORIA   JUEZ CARRASCO       1980-12-01       1
+           6  707001    901197023456   ANGEL EDUARDO FUENTES VASQUEZ       1970-01-09       1
+           7  606002        90987661      MILOVAN CC           SDFDF       2025-10-20       1
+           8  505050      8073400332         JUANITO           PEREZ       1990-03-01       1
+           9  404009        89876633         JUANITA          GARCIA       1908-09-09       1
+          10   99991          898989          PEPITO           LOPEZ       1980-09-01       1
+          11  100324   0801199402417 MILOVAN ROBERTO  MARRDER AMADOR       1994-01-17       1
+          12  778823   0501198712345  CAMILA CECILIA     LOPEZ VALLE       1987-12-09       1
+
+==================================================
+TABLA: contratos
+Total de registros: 10
+==================================================
+
+ id_contrato  id_empleado  id_puesto  id_departamento  id_tipo_contrato fecha_inicio  fecha_fin  salario  activo  id_jornada  saldo_inicial_vacaciones fecha_inicio_kardex  saldo_inicial_profilacticas         dni_perc
+           1            1          2                1                 9   2020-01-01       None  35000.0       1           1                      14.0          2025-09-01                          0.0 0801-1990-00123S
+           2            1          3                2                 9   2023-01-01       None  12000.0       1           1                       0.0                None                          0.0 0801-1990-00123S
+           3            2          5                3                 8   2021-12-16       None      0.0       1           1                       0.0                None                          0.0     80112873443L
+           8            3          3                2                 7   2025-12-16       None   3323.0       1           1                       0.0                None                          0.0    0801199912345
+           9            9          3                2                 7   2025-09-15       None  10000.0       1           1                       0.0          2025-09-15                          0.0         89876633
+          10           11         10                9                 7   2017-03-01       None  20000.0       1           2                       8.0          2025-09-01                          0.0    0801199402417
+          11            9          7                3                 7   2025-07-01 2025-12-15  12000.0       1           1                       0.0          2025-07-01                          0.0         89876633
+          12            5          6                6                 7   2021-12-16       None  20000.0       1           1                      15.0          2022-09-01                          0.0    1501198012345
+          13            8          6                4                 7   2024-12-18       None  34000.0       1           2                       1.0          2024-12-18                          0.0       8073400332
+          14           12          2                1                 7   2024-12-18       None  40400.0       1           2                       0.0          2024-12-18                          0.0    0501198712345
+
+==================================================
+TABLA: distribucion_costos
+Total de registros: 13
+==================================================
+
+ id_distribucion  id_contrato  id_unidad  porcentaje
+              41           11         11       100.0
+              42           13         17        70.0
+              43           13         12        30.0
+              46           12         29       100.0
+              49           10         42       100.0
+              52            8          9       100.0
+              53            9         41        60.0
+              54            9         22        40.0
+              55            2         20       100.0
+              56            3         36       100.0
+              57            1         13       100.0
+              58           14         25        90.0
+              59           14         21        10.0
+
+==================================================
+TABLA: inasistencias
+Total de registros: 20
+==================================================
+
+ id_inasistencia  id_empleado  id_contrato  id_tipo_inasistencia fecha_solicitud fecha_inicio_real fecha_fin_real                    motivo_detalle   estado comentario  es_por_horas hora_inicio hora_fin
+               2            2            3                     1      2025-12-16        2025-12-16     2025-12-17            Prueba de inasistencia Aprobado       None             0       08:00    16:00
+               3            1            1                     1      2025-12-16        2025-12-23     2025-12-26                                   Aprobado       None             0       08:00    16:00
+               4            3            8                     1      2025-12-16        2025-12-23     2025-12-25                                   Aprobado       None             0       08:00    16:00
+               5            1            1                     1      2025-12-16        2025-12-16     2025-12-24                                   Aprobado       None             0       08:00    16:00
+               6            1            2                     3      2025-12-16        2025-12-16     2025-12-20                                   Aprobado       None             0       08:00    16:00
+               8            5           12                     2      2025-12-16        2025-12-16     2025-12-16 Prueba de medio dia de vacaciones Aprobado       None             1       08:00    12:00
+               9            5           12                     2      2025-12-16        2025-12-16     2025-12-18                                   Aprobado       None             0       00:00    00:00
+              10            5           12                     2      2025-12-16        2025-12-16     2025-12-18                                   Aprobado       None             0       00:00    00:00
+              11            5           12                     2      2025-12-16        2025-11-11     2025-11-14                                   Aprobado       None             0       00:00    00:00
+              12            5           12                     3      2025-12-17        2025-11-24     2025-12-02                                   Aprobado       None             0       00:00    00:00
+              13            5           12                     2      2025-12-17        2025-12-17     2025-12-19                                   Aprobado       None             0       00:00    00:00
+              14            5           12                     2      2025-12-17        2025-12-26     2025-12-29                                   Aprobado       None             0       00:00    00:00
+              15           11           10                     2      2025-12-17        2025-12-17     2025-12-23                                   Aprobado       None             0       00:00    00:00
+              17            1            1                     2      2025-12-17        2025-12-17     2026-01-02                                   Aprobado       None             0       00:00    00:00
+              18           11           10                     2      2025-12-17        2025-12-25     2025-12-30                                   Aprobado       None             0       00:00    00:00
+              19           11           10                     2      2025-12-17        2025-12-17     2025-12-17                                   Aprobado       None             0       00:00    00:00
+              20            9           11                     2      2025-12-17        2025-12-17     2025-12-22                                   Aprobado       None             0       00:00    00:00
+              21            8           13                     2      2025-12-18        2025-12-18     2025-12-18                                   Aprobado       None             0       00:00    00:00
+              22           12           14                     2      2025-12-18        2025-12-18     2025-12-18                                   Aprobado       None             0       00:00    00:00
+              23           12           14                     1      2025-12-18        2025-12-22     2025-12-23                                   Aprobado       None             0       00:00    00:00
+
+==================================================
+TABLA: cat_jornadas
+Total de registros: 3
+==================================================
+
+ id_jornada        nombre  horas_diarias
+          1   Diurna (8h)            8.0
+          2    Mixta (7h)            7.0
+          3 Nocturna (6h)            6.0
+
+==================================================
+TABLA: cat_reglas_vacaciones
+Total de registros: 0
+==================================================
+
+Esta tabla está vacía.
+
+==================================================
+TABLA: kardex_vacaciones
+Total de registros: 90
+==================================================
+
+ id_movimiento  id_contrato fecha_movimiento     tipo_movimiento   dias saldo_snapshot  id_referencia                             observacion cuenta_tipo
+             1           12       2022-09-01       SALDO_INICIAL  15.00           None            NaN       Saldo Inicial al corte 2022-09-01   ORDINARIA
+             2           12       2025-09-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-09 (Antigüedad: 3a 9m)   ORDINARIA
+             3           12       2025-10-31 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2025-10 (Antigüedad: 3a 10m)   ORDINARIA
+             4           12       2025-11-30 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2025-11 (Antigüedad: 3a 11m)   ORDINARIA
+             5           12       2025-12-17                GOCE  -3.00           None           13.0                       Goce Vacaciones:    ORDINARIA
+             6           12       2025-12-17                GOCE  -3.00           None           14.0                       Goce Vacaciones:    ORDINARIA
+             7           10       2025-09-01       SALDO_INICIAL   8.00           None            NaN       Saldo Inicial al corte 2025-09-01   ORDINARIA
+             8           10       2025-12-17                GOCE  -6.00           None           15.0                       Goce Vacaciones:    ORDINARIA
+             9           10       2025-09-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-09 (Antigüedad: 8a 6m)   ORDINARIA
+            10           10       2025-10-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-10 (Antigüedad: 8a 7m)   ORDINARIA
+            11           10       2025-11-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-11 (Antigüedad: 8a 8m)   ORDINARIA
+            12            1       2025-09-01       SALDO_INICIAL  14.00           None            NaN       Saldo Inicial al corte 2025-09-01   ORDINARIA
+            13            1       2025-09-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-09 (Antigüedad: 5a 8m)   ORDINARIA
+            14            1       2025-10-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-10 (Antigüedad: 5a 9m)   ORDINARIA
+            15            1       2025-11-30 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2025-11 (Antigüedad: 5a 10m)   ORDINARIA
+            17            1       2025-12-17                GOCE -15.00           None           17.0                       Goce Vacaciones:    ORDINARIA
+            18           12       2022-09-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2022-09 (Antigüedad: 0a 9m)   ORDINARIA
+            19           12       2022-10-31 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2022-10 (Antigüedad: 0a 10m)   ORDINARIA
+            20           12       2022-11-30 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2022-11 (Antigüedad: 0a 11m)   ORDINARIA
+            21           12       2022-12-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2022-12 (Antigüedad: 1a 0m)   ORDINARIA
+            22           12       2023-01-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2023-01 (Antigüedad: 1a 1m)   ORDINARIA
+            23           12       2023-02-28 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2023-02 (Antigüedad: 1a 2m)   ORDINARIA
+            24           12       2023-03-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2023-03 (Antigüedad: 1a 3m)   ORDINARIA
+            25           12       2023-04-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2023-04 (Antigüedad: 1a 4m)   ORDINARIA
+            26           12       2023-05-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2023-05 (Antigüedad: 1a 5m)   ORDINARIA
+            27           12       2023-06-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2023-06 (Antigüedad: 1a 6m)   ORDINARIA
+            28           12       2023-07-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2023-07 (Antigüedad: 1a 7m)   ORDINARIA
+            29           12       2023-08-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2023-08 (Antigüedad: 1a 8m)   ORDINARIA
+            30           12       2023-09-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2023-09 (Antigüedad: 1a 9m)   ORDINARIA
+            31           12       2023-10-31 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2023-10 (Antigüedad: 1a 10m)   ORDINARIA
+            32           12       2023-11-30 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2023-11 (Antigüedad: 1a 11m)   ORDINARIA
+            33           12       2023-12-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2023-12 (Antigüedad: 2a 0m)   ORDINARIA
+            34           12       2024-01-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2024-01 (Antigüedad: 2a 1m)   ORDINARIA
+            35           12       2024-02-29 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2024-02 (Antigüedad: 2a 2m)   ORDINARIA
+            36           12       2024-03-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2024-03 (Antigüedad: 2a 3m)   ORDINARIA
+            37           12       2024-04-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2024-04 (Antigüedad: 2a 4m)   ORDINARIA
+            38           12       2024-05-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2024-05 (Antigüedad: 2a 5m)   ORDINARIA
+            39           12       2024-06-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2024-06 (Antigüedad: 2a 6m)   ORDINARIA
+            40           12       2024-07-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2024-07 (Antigüedad: 2a 7m)   ORDINARIA
+            41           12       2024-08-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2024-08 (Antigüedad: 2a 8m)   ORDINARIA
+            42           12       2024-09-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2024-09 (Antigüedad: 2a 9m)   ORDINARIA
+            43           12       2024-10-31 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2024-10 (Antigüedad: 2a 10m)   ORDINARIA
+            44           12       2024-11-30 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2024-11 (Antigüedad: 2a 11m)   ORDINARIA
+            45           12       2024-12-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2024-12 (Antigüedad: 3a 0m)   ORDINARIA
+            46           12       2025-01-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-01 (Antigüedad: 3a 1m)   ORDINARIA
+            47           12       2025-02-28 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-02 (Antigüedad: 3a 2m)   ORDINARIA
+            48           12       2025-03-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-03 (Antigüedad: 3a 3m)   ORDINARIA
+            49           12       2025-04-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-04 (Antigüedad: 3a 4m)   ORDINARIA
+            50           12       2025-05-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-05 (Antigüedad: 3a 5m)   ORDINARIA
+            51           12       2025-06-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-06 (Antigüedad: 3a 6m)   ORDINARIA
+            52           12       2025-07-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-07 (Antigüedad: 3a 7m)   ORDINARIA
+            53           12       2025-08-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-08 (Antigüedad: 3a 8m)   ORDINARIA
+            54           10       2025-12-17                GOCE  -4.00           None           18.0                       Goce Vacaciones:    ORDINARIA
+            55           10       2025-12-17                GOCE  -1.00           None           19.0                       Goce Vacaciones:    ORDINARIA
+            56           11       2025-07-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-07 (Antigüedad: 0a 0m)   ORDINARIA
+            57           11       2025-08-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-08 (Antigüedad: 0a 1m)   ORDINARIA
+            58           11       2025-09-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-09 (Antigüedad: 0a 2m)   ORDINARIA
+            59           11       2025-10-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-10 (Antigüedad: 0a 3m)   ORDINARIA
+            60           11       2025-11-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-11 (Antigüedad: 0a 4m)   ORDINARIA
+            61           11       2025-12-17                GOCE  -4.00           None           20.0                       Goce Vacaciones:    ORDINARIA
+            62           13       2024-12-18       SALDO_INICIAL   1.00           None            NaN       Saldo Inicial al corte 2024-12-18   ORDINARIA
+            63           13       2025-12-18                GOCE  -1.00           None           21.0                       Goce Vacaciones:    ORDINARIA
+            64           13       2024-12-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2024-12 (Antigüedad: 0a 0m)   ORDINARIA
+            65           13       2025-01-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-01 (Antigüedad: 0a 1m)   ORDINARIA
+            66           13       2025-02-28 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-02 (Antigüedad: 0a 2m)   ORDINARIA
+            67           13       2025-03-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-03 (Antigüedad: 0a 3m)   ORDINARIA
+            68           13       2025-04-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-04 (Antigüedad: 0a 4m)   ORDINARIA
+            69           13       2025-05-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-05 (Antigüedad: 0a 5m)   ORDINARIA
+            70           13       2025-06-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-06 (Antigüedad: 0a 6m)   ORDINARIA
+            71           13       2025-07-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-07 (Antigüedad: 0a 7m)   ORDINARIA
+            72           13       2025-08-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-08 (Antigüedad: 0a 8m)   ORDINARIA
+            73           13       2025-09-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-09 (Antigüedad: 0a 9m)   ORDINARIA
+            74           13       2025-10-31 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2025-10 (Antigüedad: 0a 10m)   ORDINARIA
+            75           13       2025-11-30 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2025-11 (Antigüedad: 0a 11m)   ORDINARIA
+            76            9       2025-09-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-09 (Antigüedad: 0a 0m)   ORDINARIA
+            77            9       2025-10-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-10 (Antigüedad: 0a 1m)   ORDINARIA
+            78            9       2025-11-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-11 (Antigüedad: 0a 2m)   ORDINARIA
+            79           14       2025-12-18                GOCE  -1.00           None           22.0                       Goce Vacaciones:    ORDINARIA
+            80           14       2024-12-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2024-12 (Antigüedad: 0a 0m)   ORDINARIA
+            81           14       2025-01-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-01 (Antigüedad: 0a 1m)   ORDINARIA
+            82           14       2025-02-28 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-02 (Antigüedad: 0a 2m)   ORDINARIA
+            83           14       2025-03-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-03 (Antigüedad: 0a 3m)   ORDINARIA
+            84           14       2025-04-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-04 (Antigüedad: 0a 4m)   ORDINARIA
+            85           14       2025-05-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-05 (Antigüedad: 0a 5m)   ORDINARIA
+            86           14       2025-06-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-06 (Antigüedad: 0a 6m)   ORDINARIA
+            87           14       2025-07-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-07 (Antigüedad: 0a 7m)   ORDINARIA
+            88           14       2025-08-31 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-08 (Antigüedad: 0a 8m)   ORDINARIA
+            89           14       2025-09-30 ACUMULACION_MENSUAL   1.25           None            NaN  Ganados en 2025-09 (Antigüedad: 0a 9m)   ORDINARIA
+            90           14       2025-10-31 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2025-10 (Antigüedad: 0a 10m)   ORDINARIA
+            91           14       2025-11-30 ACUMULACION_MENSUAL   1.25           None            NaN Ganados en 2025-11 (Antigüedad: 0a 11m)   ORDINARIA
+
+==================================================
+TABLA: cat_grupos_perc
+Total de registros: 14
+==================================================
+
+ id_grupo codigo             descripcion
+        1  00102     MÉDICO ESPECIALISTA
+        2  00103          MÉDICO GENERAL
+        3  00203  AUXILIAR DE ENFERMERÍA
+        4  00209               ENFERMERA
+        5  00304               PSICÓLOGO
+        6  00305              ODONTÓLOGO
+        7  00309    QUÍMICO FARMACÉUTICO
+        8  00324            MICROBIÓLOGO
+        9  00409  TÉCNICO EN LABORATORIO
+       10  00410    TÉCNICO EN ANESTESIA
+       11  00701 PERSONAL ADMINISTRATIVO
+       12  00708       TRABAJADOR SOCIAL
+       13  00736            ASESOR LEGAL
+       14  00818                   OTROS
+
+==================================================
+TABLA: nomina_variables_mensual
+Total de registros: 0
+==================================================
+
+Esta tabla está vacía.
+
