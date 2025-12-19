@@ -136,35 +136,42 @@ class VacationService:
         return proyecciones
 
     def _process_single_month(self, cursor, id_contrato, fecha_inicio_labores, fecha_cierre):
-        # ... (Este método se queda IGUAL que antes, contiene la lógica de INSERT real) ...
-        # Solo asegúrate de copiarlo aquí si lo borraste
-        periodo = fecha_cierre.strftime('%Y-%m')
-        cursor.execute("""
-            SELECT id_movimiento FROM kardex_vacaciones
-            WHERE id_contrato = ? AND tipo_movimiento = 'ACUMULACION_MENSUAL'
-            AND strftime('%Y-%m', fecha_movimiento) = ?
-        """, (id_contrato, periodo))
-        
-        if cursor.fetchone(): return
+            periodo = fecha_cierre.strftime('%Y-%m')
+            
+            # 1. Evitar duplicados
+            cursor.execute("""
+                SELECT id_movimiento FROM kardex_vacaciones
+                WHERE id_contrato = ? AND tipo_movimiento = 'ACUMULACION_MENSUAL'
+                AND strftime('%Y-%m', fecha_movimiento) = ?
+            """, (id_contrato, periodo))
+            if cursor.fetchone(): return
 
-        antiguedad = relativedelta(fecha_cierre, fecha_inicio_labores)
-        anios_cumplidos = antiguedad.years
-        anio_corriente = anios_cumplidos + 1
-        
-        cursor.execute("SELECT dias_otorgar FROM cat_reglas_vacaciones WHERE anios_antiguedad = ?", (anio_corriente,))
-        res = cursor.fetchone()
-        if not res:
-            cursor.execute("SELECT dias_otorgar FROM cat_reglas_vacaciones ORDER BY anios_antiguedad DESC LIMIT 1")
+            # 2. Calcular antigüedad al momento de ese mes
+            antiguedad = relativedelta(fecha_cierre, fecha_inicio_labores)
+            # El año corriente es los años cumplidos + 1 
+            # (Ej: si tiene 0 años cumplidos, está en su 1er año)
+            anio_en_curso = antiguedad.years + 1
+
+            # 3. BUSCAR REGLA DINÁMICA
+            cursor.execute("""
+                SELECT dias_otorgar FROM cat_reglas_vacaciones 
+                WHERE anios_antiguedad = ?
+            """, (anio_en_curso,))
             res = cursor.fetchone()
             
-        dias_anuales = res[0] if res else 15
-        dias_mensuales = dias_anuales / 12.0
-        
-        obs = f"Ganados en {periodo} (Antigüedad: {anios_cumplidos}a {antiguedad.months}m)"
-        
-        # Insertamos explícitamente como ORDINARIA
-        cursor.execute("""
-            INSERT INTO kardex_vacaciones 
-            (id_contrato, fecha_movimiento, tipo_movimiento, dias, observacion, cuenta_tipo)
-            VALUES (?, ?, 'ACUMULACION_MENSUAL', ?, ?, 'ORDINARIA')
-        """, (id_contrato, fecha_cierre, dias_mensuales, obs))
+            if not res:
+                # Si no hay regla exacta (ej: tiene 10 años y la tabla llega a 4), 
+                # tomamos la regla del año más alto disponible.
+                cursor.execute("SELECT dias_otorgar FROM cat_reglas_vacaciones ORDER BY anios_antiguedad DESC LIMIT 1")
+                res = cursor.fetchone()
+                
+            dias_anuales = res[0] if res else 15.0 # Fallback de seguridad
+            dias_mensuales = round(dias_anuales / 12.0, 4) # Guardamos con 4 decimales para precisión
+            
+            obs = f"Acumulación {periodo} (Año: {anio_en_curso}, Escala: {dias_anuales} días/año)"
+            
+            cursor.execute("""
+                INSERT INTO kardex_vacaciones 
+                (id_contrato, fecha_movimiento, tipo_movimiento, dias, observacion, cuenta_tipo)
+                VALUES (?, ?, 'ACUMULACION_MENSUAL', ?, ?, 'ORDINARIA')
+            """, (id_contrato, fecha_cierre, dias_mensuales, obs))

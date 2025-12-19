@@ -1,5 +1,6 @@
 import sqlite3
 from config.db_connection import DatabaseConnection
+import re
 
 class EmployeeDAO:
     def __init__(self):
@@ -12,7 +13,8 @@ class EmployeeDAO:
                 # Convertimos cadenas vacías "" a None (NULL en SQL)
                 # Esto es vital porque para SQLite "" es un valor y puede duplicarse, 
                 # pero si tu restricción UNIQUE choca, mejor manejarlo como NULL.
-                dni_final = dni.strip() if dni and dni.strip() else None
+                # dni_final = dni.strip() if dni and dni.strip() else None
+                dni_limpio = re.sub(r'\D', '', dni) if dni else None
                 codigo_final = codigo.strip()
                 
                 # 2. INTENTO DE GUARDADO
@@ -21,7 +23,7 @@ class EmployeeDAO:
                     VALUES (?, ?, ?, ?, ?, ?)
                 """
                 cursor = conn.cursor()
-                cursor.execute(query, (codigo_final, dni_final, nombres, apellidos, fecha_nac, activo))
+                cursor.execute(query, (codigo_final, dni_limpio, nombres, apellidos, fecha_nac, activo))
                 conn.commit()
                 
                 # Si llegamos aquí, se guardó.

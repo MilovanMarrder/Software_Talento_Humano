@@ -1,5 +1,6 @@
 import sqlite3
 from config.db_connection import DatabaseConnection
+from logics.vacation_service import VacationService
 
 class ContractDAO:
     def __init__(self):
@@ -87,14 +88,27 @@ class ContractDAO:
             for uid, pct in lista_costos:
                 cursor.execute("INSERT INTO distribucion_costos (id_contrato, id_unidad, porcentaje) VALUES (?, ?, ?)", (id_contrato, uid, pct))
             
-            # Sincronizar Kardex
-            if f_kardex:
-                self._sync_initial_balance_kardex(cursor, id_contrato, f_kardex, s_inicial)
+                
+            try:
+                # ... cursor.execute del INSERT del contrato ...
+                id_contrato = cursor.lastrowid
+                
+                # (Inserción de costos y balance inicial)
+                if f_kardex:
+                    self._sync_initial_balance_kardex(cursor, id_contrato, f_kardex, s_inicial)
 
-            conn.commit()
-            return True, "Contrato creado."
-        except Exception as e:
-            conn.rollback()
+                conn.commit()
+                
+                # --- NUEVA LÓGICA PROACTIVA ---
+                # Una vez creado el contrato, disparamos el cálculo de meses pasados
+                # para que el saldo esté disponible de inmediato.
+                vac_service = VacationService()
+                vac_service.process_monthly_accruals(id_contrato)
+                
+                return True, "Contrato creado y saldos inicializados."
+            except Exception as e:
+            
+                conn.rollback()
             return False, f"Error: {e}"
         finally:
             conn.close()

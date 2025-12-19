@@ -65,7 +65,6 @@ class MainWindow(ttk.Frame):
             ("Inasistencias", "primary"),
             ("Saldo Vacaciones", "primary"),
             ("Reportes", "primary"),
-            ("Marcajes", "light"),
             ("Configuración", "secondary") 
         ]
 
