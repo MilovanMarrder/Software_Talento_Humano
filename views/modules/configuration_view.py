@@ -4,9 +4,10 @@ from ttkbootstrap.dialogs import Messagebox
 from models.catalogs_dao import CatalogsDAO
 
 class ConfigurationView(ttk.Frame):
-    def __init__(self, parent):
+    def __init__(self, parent, controller=None):
         super().__init__(parent)
         self.pack(fill=BOTH, expand=True)
+        self.controller = controller
         
         ttk.Label(self, text="Configuración de Catálogos del Sistema", font=("Segoe UI", 18, "bold")).pack(pady=10)
         

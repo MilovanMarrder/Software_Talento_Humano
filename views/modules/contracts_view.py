@@ -7,19 +7,21 @@ from models.catalogs_dao import CatalogsDAO
 from views.components.contract_selector import ContractSelector 
 
 class ContractsView(ttk.Frame):
-    def __init__(self, parent):
+    def __init__(self, parent, controller=None):
         super().__init__(parent)
+        self.controller = controller
         self.dao = ContractDAO()
         self.cat_dao = CatalogsDAO()
         
         self.selected_contract_id = None # Control de Estado (None=Crear, ID=Editar)
         self.current_employee_id = None
         self.cost_distribution_list = [] # Lista de tuplas (id_unidad, pct)
-        
+        self.var_indefinido = ttk.BooleanVar(value=True) 
         self.pack(fill=BOTH, expand=True)
         self._create_ui()
         self._load_catalogs()
         #self._load_contract_list() # se comenta porqué ahora será una busqueda con el componente
+        self.toggle_fecha_fin()
 
     def _create_ui(self):
         # Crear un Canvas con Scroll si la pantalla es pequeña, 
@@ -150,7 +152,7 @@ class ContractsView(ttk.Frame):
         # BOTÓN NUEVO: BUSCAR HISTÓRICO
         ttk.Button(
             tools_frame, 
-            text="📂 Buscar / Editar Contrato Existente", 
+            text="📂 Buscar Contrato Existente", 
             command=self.open_contract_search, 
             bootstyle="info-outline"
         ).pack(side=LEFT, padx=10)

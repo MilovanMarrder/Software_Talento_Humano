@@ -58,60 +58,71 @@ class ContractDAO:
             suffix = nombre_upper[0] if nombre_upper else "X"
             return f"{dni}{suffix}"
 
-    # --- CREATE ACTUALIZADO ---
+
+
     def create_contract(self, data_contrato, lista_costos):
+        # Abrimos la conexión principal
         conn = self.db.get_connection()
+        id_contrato = None
+        
         try:
             cursor = conn.cursor()
             
-            # Desempaquetar
+            # 1. DESEMPAQUETADO
             (id_emp, id_puesto, id_depto, id_tipo, id_jornada, 
-             f_kardex, s_inicial, f_ini, f_fin, salario) = data_contrato
+            f_kardex, s_inicial, f_ini, f_fin, salario) = data_contrato
 
-            # 1. CALCULAR DNI PERC AUTOMÁTICO
+            # 2. CÁLCULO DE DNI PERC (Regla de negocio automática)
             dni_perc = self._calculate_dni_perc(cursor, id_emp, id_tipo)
 
+            # 3. INSERT DEL CONTRATO
             query = """
                 INSERT INTO contratos 
                 (id_empleado, id_puesto, id_departamento, id_tipo_contrato, id_jornada, 
-                 fecha_inicio_kardex, saldo_inicial_vacaciones,
-                 fecha_inicio, fecha_fin, salario, 
-                 dni_perc, activo)  -- <-- Agregado dni_perc
+                fecha_inicio_kardex, saldo_inicial_vacaciones,
+                fecha_inicio, fecha_fin, salario, dni_perc, activo)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             """
             cursor.execute(query, (id_emp, id_puesto, id_depto, id_tipo, id_jornada, 
-                                   f_kardex, s_inicial, f_ini, f_fin, salario, dni_perc))
+                                f_kardex, s_inicial, f_ini, f_fin, salario, dni_perc))
             
-            id_contrato = cursor.lastrowid
-            
-            # Insertar Costos
-            for uid, pct in lista_costos:
-                cursor.execute("INSERT INTO distribucion_costos (id_contrato, id_unidad, porcentaje) VALUES (?, ?, ?)", (id_contrato, uid, pct))
-            
-                
-            try:
-                # ... cursor.execute del INSERT del contrato ...
-                id_contrato = cursor.lastrowid
-                
-                # (Inserción de costos y balance inicial)
-                if f_kardex:
-                    self._sync_initial_balance_kardex(cursor, id_contrato, f_kardex, s_inicial)
+            id_contrato = cursor.lastrowid # Capturamos el ID de inmediato
 
-                conn.commit()
-                
-                # --- NUEVA LÓGICA PROACTIVA ---
-                # Una vez creado el contrato, disparamos el cálculo de meses pasados
-                # para que el saldo esté disponible de inmediato.
+            # 4. INSERT DE DISTRIBUCIÓN DE COSTOS
+            for uid, pct in lista_costos:
+                cursor.execute("""
+                    INSERT INTO distribucion_costos (id_contrato, id_unidad, porcentaje) 
+                    VALUES (?, ?, ?)
+                """, (id_contrato, uid, pct))
+            
+            # 5. SINCRONIZACIÓN DE SALDO INICIAL EN KARDEX (Si hay fecha)
+            if f_kardex:
+                self._sync_initial_balance_kardex(cursor, id_contrato, f_kardex, s_inicial)
+
+            # 6. CIERRE DE TRANSACCIÓN ATÓMICA
+            # Guardamos todo lo anterior (Contrato + Costos + Saldo Inicial)
+            conn.commit() 
+            conn.close() # Cerramos conexión A para liberar el bloqueo de escritura de SQLite
+
+            # 7. LÓGICA PROACTIVA POST-CIERRE
+            # Disparamos el cálculo de meses acumulados. 
+            # Al estar fuera de la conexión anterior, el Service puede abrir la suya propia sin bloqueos.
+            try:
                 vac_service = VacationService()
                 vac_service.process_monthly_accruals(id_contrato)
-                
-                return True, "Contrato creado y saldos inicializados."
-            except Exception as e:
-            
+                msg_exito = "Contrato creado y saldos proyectados correctamente."
+            except Exception as e_acc:
+                msg_exito = f"Contrato creado, pero hubo un detalle calculando los meses: {e_acc}"
+
+            return True, msg_exito
+
+        except Exception as e:
+            # Si algo falla antes del commit, limpiamos todo (Atomicidad)
+            if conn:
                 conn.rollback()
-            return False, f"Error: {e}"
-        finally:
-            conn.close()
+                conn.close()
+            print(f"DEBUG: Error al crear contrato: {e}")
+            return False, f"No se pudo crear el contrato: {e}"
 
     # --- UPDATE ACTUALIZADO ---
     def update_contract(self, id_contrato, data_contrato, lista_costos):
@@ -162,29 +173,24 @@ class ContractDAO:
             conn.close()
 
 
+
     def delete_contract(self, id_contrato):
-            conn = self.db.get_connection()
-            try:
-                cursor = conn.cursor()
-                print(f"DEBUG DAO: Intentando borrar contrato {id_contrato}") # <--- Agrega esto
-                
-                # 1. Eliminar costos
-                cursor.execute("DELETE FROM distribucion_costos WHERE id_contrato = ?", (id_contrato,))
-                
-                # 2. Eliminar contrato
-                cursor.execute("DELETE FROM contratos WHERE id_contrato = ?", (id_contrato,))
-                
-                if cursor.rowcount == 0:
-                    print("DEBUG DAO: No se borró nada (rowcount 0)")
-                    
-                conn.commit() # <--- ¡CRÍTICO!
-                return True, "Contrato eliminado correctamente."
-            except Exception as e:
-                conn.rollback()
-                print(f"DEBUG DAO ERROR: {e}")
-                return False, f"No se pudo eliminar: {e}"
-            finally:
-                conn.close()
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            # Gracias al ON DELETE CASCADE, esto borrará automáticamente:
+            # - Filas en distribucion_costos
+            # - Filas en kardex_vacaciones
+            # - Filas en inasistencias
+            cursor.execute("DELETE FROM contratos WHERE id_contrato = ?", (id_contrato,))
+            
+            conn.commit()
+            return True, "Contrato y todos sus registros vinculados eliminados correctamente."
+        except Exception as e:
+            conn.rollback()
+            return False, f"Error al eliminar: {e}"
+        finally:
+            conn.close()
             
     def get_employee_by_code(self, codigo):
         """Busca ID y Nombre de empleado por su código"""

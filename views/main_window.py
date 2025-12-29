@@ -1,6 +1,8 @@
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from views import styles
+
+# Importaciones de vistas
 from views.modules.employees_view import EmployeesView
 from views.modules.contracts_view import ContractsView
 from views.modules.configuration_view import ConfigurationView
@@ -16,7 +18,7 @@ class MainWindow(ttk.Frame):
     """
     def __init__(self, parent, controller):
         super().__init__(parent)
-        self.controller = controller # Referencia al orquestador (futuro)
+        self.controller = controller # Referencia al orquestador (App)
         self.pack(fill=BOTH, expand=True)
         
         # Estructura: 2 Columnas
@@ -35,7 +37,7 @@ class MainWindow(ttk.Frame):
         self.content_frame = ttk.Frame(self, padding=styles.PAD_DEFAULT)
         self.content_frame.pack(side=RIGHT, fill=BOTH, expand=True)
 
-        # Mensaje de bienvenida temporal
+        # Mensaje de bienvenida
         lbl_welcome = ttk.Label(
             self.content_frame, 
             text="Sistema de Información para Talento Humano\nHospital María Especialidades Pediátricas", 
@@ -69,18 +71,19 @@ class MainWindow(ttk.Frame):
         ]
 
         for text, style in menu_items:
+            # Usamos lambda t=text para capturar el valor actual de la iteración
             btn = ttk.Button(
                 self.sidebar_frame, 
                 text=text, 
                 bootstyle=style,
-                command=lambda t=text: self.navegar_a(t) # Callback temporal
+                command=lambda t=text: self.navegar_a(t) 
             )
             btn.pack(fill=X, pady=5, padx=10)
             
         # Info versión al pie
         lbl_version = ttk.Label(
             self.sidebar_frame,
-            text="v1.0.0\ndev. M. Marrder",
+            text="v1.0.0\nDesarrollado por M. Marrder 2025",
             font=styles.FONT_SMALL,
             bootstyle="inverse-secondary",
             justify='center'
@@ -95,21 +98,30 @@ class MainWindow(ttk.Frame):
         for widget in self.content_frame.winfo_children():
             widget.destroy()
 
-        # 2. Cargar la vista solicitada
+        # 2. Cargar la vista solicitada pasando SIEMPRE self.controller
         if modulo == "Empleados":
-            EmployeesView(self.content_frame) # Instancia y se auto-empaqueta
-        # elif modulo == "Inicio":
-        #      ttk.Label(self.content_frame, text="Bienvenido al sistema de Gestión\ndel Talento Humano HMEP", font=("Segoe UI", 24), justify='center').pack(pady=50)
+            EmployeesView(self.content_frame, self.controller) 
+            
         elif modulo == "Contratos":
-            ContractsView(self.content_frame) # Instancia y se auto-empaqueta
+            ContractsView(self.content_frame, self.controller)
+            
         elif modulo == "Configuración":
-            ConfigurationView(self.content_frame)
+            # Nota: Si ConfigurationView no usa controller, quitar el segundo argumento
+            ConfigurationView(self.content_frame, self.controller)
+            
         elif modulo == "Inasistencias":
-            AttendanceView(self.content_frame)
+            AttendanceView(self.content_frame, self.controller)
+            
         elif modulo == "Saldo Vacaciones":
-            VacationBalanceView(self.content_frame)
+            VacationBalanceView(self.content_frame, self.controller)
+            
         elif modulo == "Reportes":
             ReportsView(self.content_frame, self.controller)
+            
         else:
             # Placeholder para módulos no hechos aún
-            ttk.Label(self.content_frame, text=f"Módulo {modulo} en construcción...", bootstyle="warning").pack(pady=50)
+            ttk.Label(
+                self.content_frame, 
+                text=f"Módulo {modulo} en construcción...", 
+                bootstyle="warning"
+            ).pack(pady=50)

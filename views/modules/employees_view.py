@@ -4,8 +4,9 @@ from ttkbootstrap.dialogs import Messagebox
 from models.employee_dao import EmployeeDAO
 
 class EmployeesView(ttk.Frame):
-    def __init__(self, parent):
+    def __init__(self, parent, controller=None):  
         super().__init__(parent)
+        self.controller = controller  
         self.dao = EmployeeDAO()
         self.selected_id = None # ESTADO: None = Creando, Numero = Editando
         
@@ -46,19 +47,21 @@ class EmployeesView(ttk.Frame):
         self.date_entry.entry.configure(textvariable=self.var_fecha)
         self.date_entry.grid(row=2, column=1, padx=5, pady=5, sticky=W)
 
-        # Botones de Acción
+        # --- BOTONES DE ACCIÓN ---
         btn_frame = ttk.Frame(form_frame)
         btn_frame.grid(row=2, column=3, sticky=E)
 
-        # Referencia al botón para cambiarle el texto luego
+        # Botón Guardar (Siempre visible)
         self.btn_save = ttk.Button(btn_frame, text="Guardar Empleado", bootstyle="success", command=self.save_employee)
         self.btn_save.pack(side=LEFT, padx=5)
 
+        # Botón Eliminar (Oculto por defecto, solo visible al editar)
+        self.btn_delete = ttk.Button(btn_frame, text="Eliminar", bootstyle="danger", command=self.delete_current_employee)
+        # No hacemos pack aquí, se hace dinámicamente en on_row_double_click
+
+        # Botón Cancelar (Oculto por defecto)
         self.btn_cancel = ttk.Button(btn_frame, text="Cancelar", bootstyle="secondary", command=self.clear_form)
-        self.btn_cancel.pack(side=LEFT)
-        self.btn_cancel.hide = lambda: self.btn_cancel.pack_forget() # Helper
-        self.btn_cancel.show = lambda: self.btn_cancel.pack(side=LEFT) # Helper
-        self.btn_cancel.hide() # Oculto al inicio
+        # No hacemos pack aquí
 
         # --- Tabla ---
         table_frame = ttk.Frame(self, padding=10)
@@ -69,7 +72,7 @@ class EmployeesView(ttk.Frame):
         
         # Configurar columnas
         self.tree.heading("id", text="ID")
-        self.tree.column("id", width=0, stretch=False) # Oculto visualmente pero accesible
+        self.tree.column("id", width=0, stretch=False) # Oculto visualmente
         self.tree.heading("codigo", text="Cód.")
         self.tree.column("codigo", width=80)
         self.tree.heading("dni", text="DNI")
@@ -112,9 +115,12 @@ class EmployeesView(ttk.Frame):
         self.var_apellidos.set(values[4])
         self.var_fecha.set(values[5])
         
-        # Cambiar estado visual
+        # Cambiar estado visual a MODO EDICIÓN
         self.btn_save.configure(text="Actualizar Empleado", bootstyle="warning")
-        self.btn_cancel.show()
+        
+        # Mostrar botones de soporte
+        self.btn_cancel.pack(side=LEFT, padx=5)
+        self.btn_delete.pack(side=LEFT, padx=5) # <--- AHORA APARECE EL ROJO
 
     def clear_form(self):
         """Reinicia el formulario al estado 'Crear'"""
@@ -123,53 +129,76 @@ class EmployeesView(ttk.Frame):
         self.var_dni.set("")
         self.var_nombres.set("")
         self.var_apellidos.set("")
-        # Limpiar fecha (opcional, depende de DateEntry)
         
+        # Restaurar estado visual a MODO CREAR
         self.btn_save.configure(text="Guardar Empleado", bootstyle="success")
-        self.btn_cancel.hide()
-        self.tree.selection_remove(self.tree.selection()) # Deseleccionar tabla
+        
+        # Ocultar botones de soporte
+        self.btn_cancel.pack_forget()
+        self.btn_delete.pack_forget()
+        
+        self.tree.selection_remove(self.tree.selection())
 
     def save_employee(self):
-            # 1. Validaciones
-            if not self.var_codigo.get() or not self.var_nombres.get():
-                Messagebox.show_error("Código y Nombres son obligatorios.", "Error")
-                return
-            
-            # Conversión a Mayúsculas
-            nombres = self.var_nombres.get().upper().strip()
-            apellidos = self.var_apellidos.get().upper().strip()
-            
-            # Reflejar en UI
-            self.var_nombres.set(nombres)
-            self.var_apellidos.set(apellidos)
+        # 1. Validaciones
+        if not self.var_codigo.get() or not self.var_nombres.get():
+            Messagebox.show_error("Código y Nombres son obligatorios.", "Error")
+            return
+        
+        # Conversión a Mayúsculas
+        nombres = self.var_nombres.get().upper().strip()
+        apellidos = self.var_apellidos.get().upper().strip()
+        
+        self.var_nombres.set(nombres)
+        self.var_apellidos.set(apellidos)
 
-            # 2. Decidir si es Insert o Update
-            # (AQUÍ YA ELIMINAMOS EL BLOQUE DUPLICADO QUE TENÍAS ANTES)
-            
-            if self.selected_id is None:
-                # MODO CREAR
-                success, msg = self.dao.insert(
-                    self.var_codigo.get().strip(),
-                    self.var_dni.get().strip(),
-                    nombres,
-                    apellidos,
-                    self.var_fecha.get()
-                )
-            else:
-                # MODO EDITAR
-                success, msg = self.dao.update(
-                    self.selected_id,
-                    self.var_codigo.get().strip(),
-                    self.var_dni.get().strip(),
-                    nombres,
-                    apellidos,
-                    self.var_fecha.get()
-                )
+        # 2. Decidir acción
+        if self.selected_id is None:
+            # CREATE
+            success, msg = self.dao.insert(
+                self.var_codigo.get().strip(),
+                self.var_dni.get().strip(),
+                nombres,
+                apellidos,
+                self.var_fecha.get()
+            )
+        else:
+            # UPDATE
+            success, msg = self.dao.update(
+                self.selected_id,
+                self.var_codigo.get().strip(),
+                self.var_dni.get().strip(),
+                nombres,
+                apellidos,
+                self.var_fecha.get()
+            )
 
-            # 3. Respuesta
+        # 3. Respuesta
+        if success:
+            Messagebox.show_info(msg, "Éxito")
+            self.clear_form()
+            self.load_table_data()
+        else:
+            Messagebox.show_error(msg, "Error")
+
+    def delete_current_employee(self):
+        """Lógica para eliminar el empleado seleccionado"""
+        if not self.selected_id: return
+
+        # Confirmación
+        confirm = Messagebox.yesno(
+            message="¿Está seguro que desea eliminar este empleado permanentemente?\nEsta acción es irreversible.",
+            title="Confirmar Eliminación",
+            alert=True
+        )
+        
+        if confirm == 'Yes':
+            success, message = self.dao.delete_employee(self.selected_id)
+            
             if success:
-                Messagebox.show_info(msg, "Éxito")
+                Messagebox.show_info(message, "Eliminado")
                 self.clear_form()
                 self.load_table_data()
             else:
-                Messagebox.show_error(msg, "Error")
+                # Si falla (ej: tiene contratos), mostramos el error del DAO
+                Messagebox.show_error(message, "No se pudo eliminar")

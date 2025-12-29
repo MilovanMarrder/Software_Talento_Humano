@@ -42,38 +42,38 @@ class ReportsView(ttk.Frame):
             filename_prefix="PROGRAMACION_HORAS_PERC",
             export_method=self.service.generate_programacion_horas_perc_excel
         )
+        # CAMBIO 1: Vinculamos al método real del servicio
         self._create_report_section_attemporal(
-            title="Descargar Base de Datos en Excel",
-            filename_prefix="Base de datos Talento Humano",
-            export_method=self.service.generate_horas_extras_excel # Aún en contrucción solo generé el maquetado
+            title="Descargar Base de Datos Completa",
+            filename_prefix="BACKUP_RRHH_FULL",
+            export_method=self.service.export_database_to_excel 
         )
-
 
 #----------------------------------------------FIN-SECCIÓN DE REPORTES-------------------------------------------
-    def _create_report_section_attemporal(self, title, filename_prefix, export_method):
-        """
-        Caja de reporte sin un periodo en especifico.
-        Pensado para reportes de descarga de tablas de la base de datos.
-        """
-        card = ttk.Labelframe(self.main_container, text=title, padding=15)
-        card.pack(fill=X, pady=10, anchor="n")
+    # def _create_report_section_attemporal(self, title, filename_prefix, export_method):
+    #     """
+    #     Caja de reporte sin un periodo en especifico.
+    #     Pensado para reportes de descarga de tablas de la base de datos.
+    #     """
+    #     card = ttk.Labelframe(self.main_container, text=title, padding=15)
+    #     card.pack(fill=X, pady=10, anchor="n")
 
-        row = ttk.Frame(card)
-        row.pack(fill=X)
-        # --- Barra de progreso (oculta) ---
-        progress = ttk.Progressbar(card, mode='indeterminate', bootstyle="success-striped")
+    #     row = ttk.Frame(card)
+    #     row.pack(fill=X)
+    #     # --- Barra de progreso (oculta) ---
+    #     progress = ttk.Progressbar(card, mode='indeterminate', bootstyle="success-striped")
 
-        # --- Botón de Generar ---
-        # Usamos una función lambda para pasar los widgets específicos de esta card
-        btn_generar = ttk.Button(
-            row, 
-            text="Generar Excel", 
-            bootstyle="success",
-            command=lambda: self._handle_generate_click_no_period(
-              btn_generar, progress, filename_prefix, export_method
-            )
-        )
-        btn_generar.pack(side=LEFT)
+    #     # --- Botón de Generar ---
+    #     # Usamos una función lambda para pasar los widgets específicos de esta card
+    #     btn_generar = ttk.Button(
+    #         row, 
+    #         text="Generar Excel", 
+    #         bootstyle="success",
+    #         command=lambda: self._handle_generate_click_no_period(
+    #           btn_generar, progress, filename_prefix, export_method
+    #         )
+    #     )
+    #     btn_generar.pack(side=LEFT)
 
 
     def _create_report_section(self, title, filename_prefix, export_method):
@@ -116,29 +116,29 @@ class ReportsView(ttk.Frame):
         )
         btn_generar.pack(side=LEFT)
 
-    def _handle_generate_click_no_period(self, btn, progress, prefix, method):
-        """Lógica genérica para el botón de generar"""
+    # def _handle_generate_click_no_period(self, btn, progress, prefix, method):
+    #     """Lógica genérica para el botón de generar"""
 
-        filename = f"{prefix}_.xlsx"
-        filepath = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            filetypes=[("Excel Files", "*.xlsx")],
-            initialfile=filename,
-            title="Guardar Reporte"
-        )
+    #     filename = f"{prefix}_.xlsx"
+    #     filepath = filedialog.asksaveasfilename(
+    #         defaultextension=".xlsx",
+    #         filetypes=[("Excel Files", "*.xlsx")],
+    #         initialfile=filename,
+    #         title="Guardar Reporte"
+    #     )
 
-        if not filepath:
-            return
+    #     if not filepath:
+    #         return
 
-        # Bloquear UI de esta card específica
-        self._set_loading_state(True,  btn, progress)
+    #     # Bloquear UI de esta card específica
+    #     self._set_loading_state(True,  btn, progress)
 
-        # Ejecutar en hilo separado
-        thread = threading.Thread(
-            target=self._run_export_logic, 
-            args=(method, filepath,  btn, progress)
-        )
-        thread.start()
+    #     # Ejecutar en hilo separado
+    #     thread = threading.Thread(
+    #         target=self._run_export_logic, 
+    #         args=(method, filepath,  btn, progress)
+    #     )
+    #     thread.start()
 
     def _handle_generate_click(self, combo_mes, spin_anio, btn, progress, prefix, method):
         """Lógica genérica para el botón de generar"""
@@ -185,20 +185,20 @@ class ReportsView(ttk.Frame):
         else:
             messagebox.showerror("Error", message)
 
-    def _set_loading_state(self, is_loading, combo, spin, btn, progress):
-        """Habilita o deshabilita los widgets de una card específica"""
-        if is_loading:
-            btn.config(state="disabled", text="Generando...")
-            combo.config(state="disabled")
-            spin.config(state="disabled")
-            progress.pack(fill=X, pady=(10, 0))
-            progress.start(10)
-        else:
-            progress.stop()
-            progress.pack_forget()
-            btn.config(state="normal", text="Generar Excel")
-            combo.config(state="readonly")
-            spin.config(state="normal")
+    # def _set_loading_state(self, is_loading, combo, spin, btn, progress):
+    #     """Habilita o deshabilita los widgets de una card específica"""
+    #     if is_loading:
+    #         btn.config(state="disabled", text="Generando...")
+    #         combo.config(state="disabled")
+    #         spin.config(state="disabled")
+    #         progress.pack(fill=X, pady=(10, 0))
+    #         progress.start(10)
+    #     else:
+    #         progress.stop()
+    #         progress.pack_forget()
+    #         btn.config(state="normal", text="Generar Excel")
+    #         combo.config(state="readonly")
+    #         spin.config(state="normal")
     def _create_report_with_input_section(self, title, filename_prefix, export_method):
         """Crea una card que requiere cargar un archivo antes de generar"""
         card = ttk.Labelframe(self.main_container, text=title, padding=15)
@@ -294,3 +294,114 @@ class ReportsView(ttk.Frame):
             success, message = False, f"Error: {str(e)}"
         
         self.after(0, lambda: self._on_export_finished(success, message, *widgets))
+
+
+
+
+
+
+
+
+
+
+# --------------------------- Códgio nuevo . 
+
+
+    def _create_report_section_attemporal(self, title, filename_prefix, export_method):
+        """Caja de reporte SIN periodo (Corrección del Handler)"""
+        card = ttk.Labelframe(self.main_container, text=title, padding=15)
+        card.pack(fill=X, pady=10, anchor="n")
+
+        row = ttk.Frame(card)
+        row.pack(fill=X)
+        
+        progress = ttk.Progressbar(card, mode='indeterminate', bootstyle="success-striped")
+
+        btn_generar = ttk.Button(
+            row, 
+            text="Exportar Todo a Excel", 
+            bootstyle="warning", # Cambié a warning para destacar que es una descarga masiva
+            command=lambda: self._handle_generate_click_no_period(
+              btn_generar, progress, filename_prefix, export_method
+            )
+        )
+        btn_generar.pack(side=LEFT)
+
+    def _handle_generate_click_no_period(self, btn, progress, prefix, method):
+        """Maneja el clic para reportes sin fecha"""
+        # Generar nombre con timestamp para evitar sobreescritura
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        filename = f"{prefix}_{timestamp}.xlsx"
+        
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel Files", "*.xlsx")],
+            initialfile=filename,
+            title="Guardar Base de Datos"
+        )
+
+        if not filepath:
+            return
+
+        self._set_loading_state(True, btn, progress)
+
+        # CAMBIO 2: Llamamos a un runner simplificado, NO a _run_export_logic
+        thread = threading.Thread(
+            target=self._run_simple_export_logic, 
+            args=(method, filepath, btn, progress)
+        )
+        thread.start()
+
+    # --- NUEVO MÉTODO RUNNER (Para evitar el error de argumentos) ---
+    def _run_simple_export_logic(self, method, filepath, *widgets):
+        """Ejecuta métodos que solo requieren filepath"""
+        try:
+            success, message = method(filepath)
+        except Exception as e:
+            success, message = False, f"Error inesperado: {str(e)}"
+        
+        self.after(0, lambda: self._on_export_finished_simple(success, message, *widgets))
+
+    # --- NUEVO MÉTODO FINISHER (Simplificado) ---
+    def _on_export_finished_simple(self, success, message, btn, progress):
+        """Restaura la UI después de exportar"""
+        progress.stop()
+        progress.pack_forget()
+        btn.config(state="normal", text="Exportar Todo a Excel")
+        
+        if success:
+            messagebox.showinfo("Éxito", message)
+        else:
+            messagebox.showerror("Error", message)
+
+    # ... (resto de métodos: _set_loading_state, etc. ajustados para soportar widgets opcionales) ...
+    
+    def _set_loading_state(self, is_loading, *args):
+        """
+        Versión polimórfica de _set_loading_state.
+        Detecta qué widgets llegaron para deshabilitarlos.
+        """
+        # El último argumento siempre es la barra de progreso
+        progress = args[-1] 
+        # El penúltimo es el botón
+        btn = args[-2] 
+
+        if is_loading:
+            btn.config(state="disabled", text="Procesando...")
+            progress.pack(fill=X, pady=(10, 0))
+            progress.start(10)
+            
+            # Si hay más argumentos (Combos/Spins), los deshabilitamos
+            for w in args[:-2]:
+                try: w.config(state="disabled")
+                except: pass
+        else:
+            progress.stop()
+            progress.pack_forget()
+            btn.config(state="normal") # El texto se restaura en el finisher específico
+            
+            for w in args[:-2]:
+                try: 
+                    if isinstance(w, ttk.Combobox): w.config(state="readonly")
+                    else: w.config(state="normal")
+                except: pass

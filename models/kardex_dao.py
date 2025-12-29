@@ -1,4 +1,3 @@
-import sqlite3
 from config.db_connection import DatabaseConnection
 
 class KardexDAO:

@@ -2,6 +2,7 @@ import pandas as pd
 from config.db_connection import DatabaseConnection
 import calendar
 import sqlite3
+from config import settings
 
 class PercExportService:
     def __init__(self):
@@ -151,4 +152,54 @@ class PercExportService:
 
 
     def generate_horas_extras_excel():
-        return 0
+        pass
+
+    def export_database_to_excel(self, output_path):
+        """
+        Exporta todas las tablas de la BD a un Excel (hoja por tabla).
+        No requiere parámetros de fecha.
+        """
+        db_path = settings.DB_PATH
+
+        if not db_path.exists():
+            return False, f"No se encontró la base de datos en: {db_path}"
+
+        conn = sqlite3.connect(db_path)
+
+        try:
+            # 1. Obtener lista de tablas
+            query_tables = """
+            SELECT name
+            FROM sqlite_master
+            WHERE type='table'
+            AND name NOT LIKE 'sqlite_%';
+            """
+            tables = pd.read_sql(query_tables, conn)
+
+            if tables.empty:
+                return False, "La base de datos está vacía (no tiene tablas)."
+
+            # 2. Escribir Excel
+            with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+                for table_name in tables["name"]:
+                    # Leemos cada tabla
+                    df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
+                    
+                    # Excel limita nombres de hoja a 31 chars
+                    sheet_name = table_name[:31]
+                    
+                    df.to_excel(writer, sheet_name=sheet_name, index=False)
+                    
+                    # Ajuste cosmético de ancho de columnas
+                    worksheet = writer.sheets[sheet_name]
+                    for column_cells in worksheet.columns:
+                        length = max(len(str(cell.value)) for cell in column_cells)
+                        if length > 0:
+                            worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
+
+            return True, f"Base de datos exportada correctamente en:\n{output_path}"
+
+        except Exception as e:
+            return False, f"Error exportando BD: {str(e)}"
+        finally:
+            conn.close()

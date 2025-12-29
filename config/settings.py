@@ -19,4 +19,4 @@ ICON_PATH = ASSETS_DIR / "blowfish_icon.ico"
 
 # Constantes de la App
 APP_TITLE = "Sistema de Talento Humano HMEP"
-APP_SIZE = "1100x650" # Un poco más grande para comodidad
+APP_SIZE = "1250x620" # Un poco más grande para comodidad

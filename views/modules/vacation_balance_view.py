@@ -1,15 +1,17 @@
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
+from tkinter import filedialog 
 from views.components.employee_selector import EmployeeSelector
 from models.attendance_dao import AttendanceDAO 
 from models.kardex_dao import KardexDAO
-from logics.vacation_service import VacationService
 from logics.report_service import ReportService
+from datetime import datetime 
 
 class VacationBalanceView(ttk.Frame):
-    def __init__(self, parent):
+    def __init__(self, parent, controller=None):
         super().__init__(parent)
+        self.controller = controller
         self.pack(fill=BOTH, expand=True)
 
         self.report_service = ReportService()         
@@ -18,6 +20,8 @@ class VacationBalanceView(ttk.Frame):
         
         self.current_emp_id = None
         self.contracts_map = []
+
+        self.current_emp_name = "Empleado" 
         
         self._setup_ui()
 
@@ -33,7 +37,7 @@ class VacationBalanceView(ttk.Frame):
         
         # === FILA 1: DATOS DEL EMPLEADO Y CONTRATO ===
         row1 = ttk.Frame(filter_frame)
-        row1.pack(fill=X, pady=(0, 5)) # Un poco de espacio abajo para separar de la fila 2
+        row1.pack(fill=X, pady=(0, 5)) 
 
         # 1. Selector Empleado
         f_emp = ttk.Frame(row1)
@@ -47,10 +51,10 @@ class VacationBalanceView(ttk.Frame):
         f_con.pack(side=LEFT, padx=15, fill=X, expand=True)
         ttk.Label(f_con, text="Contrato:").pack(side=LEFT)
         self.cb_contrato = ttk.Combobox(f_con, state="readonly")
-        self.cb_contrato.pack(side=LEFT, padx=5, fill=X, expand=True) # Que ocupe el espacio restante
+        self.cb_contrato.pack(side=LEFT, padx=5, fill=X, expand=True) 
         self.cb_contrato.bind("<<ComboboxSelected>>", self.run_report)
 
-        # === FILA 2: FECHAS Y BOTÓN DE ACCIÓN ===
+        # === FILA 2: FECHAS Y BOTONES DE ACCIÓN ===
         row2 = ttk.Frame(filter_frame)
         row2.pack(fill=X, pady=5)
 
@@ -63,13 +67,17 @@ class VacationBalanceView(ttk.Frame):
         self.date_ini.pack(side=LEFT, padx=5)
         self.date_ini.entry.delete(0, END) 
 
-        ttk.Label(f_date, text="Hasta:").pack(side=LEFT, padx=(15, 0)) # Margen extra a la izquierda
+        ttk.Label(f_date, text="Hasta:").pack(side=LEFT, padx=(15, 0)) 
         self.date_fin = ttk.DateEntry(f_date, dateformat='%Y-%m-%d', width=12)
         self.date_fin.pack(side=LEFT, padx=5)
         self.date_fin.entry.delete(0, END)
 
-        # 4. Botón Filtrar (Lado Derecho - Destacado)
-        ttk.Button(row2, text="Filtrar Reporte", command=self.run_report, bootstyle="secondary").pack(side=RIGHT, padx=10)
+        # 4. Botones (Lado Derecho)
+        # Botón Exportar Excel (Nuevo)
+        ttk.Button(row2, text="Descargar Excel", command=self.export_excel, bootstyle="success-outline").pack(side=RIGHT, padx=5)
+        
+        # Botón Filtrar
+        ttk.Button(row2, text="Filtrar Reporte", command=self.run_report, bootstyle="secondary").pack(side=RIGHT, padx=5)
 
 
         # --- TABLA DE RESULTADOS ---
@@ -116,6 +124,7 @@ class VacationBalanceView(ttk.Frame):
     def on_employee_selected(self, emp_id, emp_code, emp_name):
         self.current_emp_id = emp_id
         self.lbl_emp.config(text=f"{emp_name}", bootstyle="primary")
+        self.current_emp_name = emp_name
         
         self.contracts_map = self.att_dao.get_active_contracts_by_employee(emp_id)
         vals = [c[1] for c in self.contracts_map]
@@ -128,36 +137,39 @@ class VacationBalanceView(ttk.Frame):
             self.cb_contrato.set('')
             self.clear_table()
 
-    def run_report(self, event=None):
+    def _get_filter_data(self):
+        """Helper para extraer datos del formulario"""
         txt_contrato = self.cb_contrato.get()
-        if not txt_contrato: return
+        if not txt_contrato: return None, None, None
 
         id_con = None
         for cid, cname in self.contracts_map:
             if cname == txt_contrato:
                 id_con = cid
                 break
-        if id_con is None: return
+        
+        if id_con is None: return None, None, None
 
         f_ini = self.date_ini.entry.get()
         if not f_ini: f_ini = None
         f_fin = self.date_fin.entry.get()
         if not f_fin: f_fin = None
+        
+        return id_con, f_ini, f_fin
 
-        self.clear_table()
-
-
+    def run_report(self, event=None):
+        id_con, f_ini, f_fin = self._get_filter_data()
+        if not id_con: return
 
         self.clear_table()
         self.master.config(cursor="watch")
         self.master.update()
 
         try:
-            # === LLAMADA AL SERVICIO (Una sola línea limpia) ===
+            # === LLAMADA AL SERVICIO ===
             data = self.report_service.get_kardex_report_data(id_con, f_ini, f_fin)
             
             # === RENDERIZADO ===
-            
             # A. Saldo Anterior
             if data["saldo_anterior"] != 0 or f_ini:
                  self.tree.insert("", END, values=(
@@ -184,9 +196,6 @@ class VacationBalanceView(ttk.Frame):
                     f"{row['saldo']:.2f}"
                 ), tags=(tag,))
 
-            # C. Separador Proyecciones (Opcional, si detectamos cambio de tipo)
-            # (Simplificado aquí, pero podrías insertar una fila vacía antes de la primera proyección)
-
             # D. Totales
             tot = data["totales"]
             self.tree.insert("", END, values=(
@@ -194,10 +203,56 @@ class VacationBalanceView(ttk.Frame):
                 f"{tot['debe']:.2f}", f"{tot['haber']:.2f}", f"{tot['saldo_final']:.2f}"
             ), tags=('total',))
 
+            # Estilos visuales del Treeview
+            self.tree.tag_configure('bold', font=('Segoe UI', 9, 'bold'))
+            self.tree.tag_configure('total', font=('Segoe UI', 9, 'bold'), background='#e1e1e1')
+            self.tree.tag_configure('projection', foreground='#555555')
+
         except Exception as e:
             print(f"Error UI: {e}")
             Messagebox.show_error(f"Error generando reporte: {e}")
         finally:
             self.master.config(cursor="")
+
+    def export_excel(self):
+        """Manejador del botón Exportar"""
+        id_con, f_ini, f_fin = self._get_filter_data()
+        if not id_con:
+            Messagebox.show_warning("Seleccione un empleado y contrato primero.")
+            return
+
+        fecha_corte = f_fin if f_fin else datetime.now().strftime("%Y-%m-%d")
+        # Limpiamos el nombre de caracteres prohibidos en windows (\ / : * ? " < > |)
+        safe_name = "".join([c for c in self.current_emp_name if c.isalnum() or c in (' ', '-', '_')]).strip()
+        
+        filename = f"{safe_name} Saldo de Vacaciones al {fecha_corte}.xlsx"
+        # Pedir ubicación
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel Files", "*.xlsx")],
+            initialfile=filename,
+            title="Guardar Kardex"
+        )
+
+        if not filepath: return
+
+        # Ejecutar exportación
+        self.master.config(cursor="watch")
+        try:
+            # Asumiendo que ya actualizaste el ReportService con el código que te pasé
+            success, msg = self.report_service.export_kardex_excel(id_con, f_ini, f_fin, filepath,employee_name=self.current_emp_name)
+            
+            if success:
+                Messagebox.show_info(msg, "Exportación Exitosa")
+            else:
+                Messagebox.show_error(msg, "Error")
+        except AttributeError:
+             Messagebox.show_error("El servicio de reportes no tiene el método 'export_kardex_excel'.\nAsegúrese de actualizar 'logics/report_service.py'.", "Error de Código")
+        except Exception as e:
+             Messagebox.show_error(f"Error inesperado: {str(e)}", "Error")
+        finally:
+            self.master.config(cursor="")
+
     def clear_table(self):
         for i in self.tree.get_children(): self.tree.delete(i)

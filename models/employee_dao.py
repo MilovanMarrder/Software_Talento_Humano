@@ -78,3 +78,36 @@ class EmployeeDAO:
         rows = cursor.fetchall()
         conn.close()
         return rows
+    
+    
+    def delete_employee(self, employee_id):
+            """
+            Elimina un empleado SOLO si no tiene contratos vinculados.
+            Retorna: (True/False, Mensaje)
+            """
+            conn = self.db.get_connection()
+            try:
+                cursor = conn.cursor()
+                
+                # 1. VERIFICACIÓN DE SEGURIDAD
+                # Contamos si tiene contratos (activos o inactivos)
+                cursor.execute("SELECT COUNT(*) FROM contratos WHERE id_empleado = ?", (employee_id,))
+                count = cursor.fetchone()[0]
+                
+                if count > 0:
+                    return False, f"No se puede eliminar: El empleado tiene {count} contrato(s) registrado(s). Debe eliminar los contratos primero o marcarlo como inactivo."
+
+                # 2. EJECUTAR BORRADO
+                cursor.execute("DELETE FROM empleados WHERE id_empleado = ?", (employee_id,))
+                
+                if cursor.rowcount > 0:
+                    conn.commit()
+                    return True, "Empleado eliminado correctamente del sistema."
+                else:
+                    return False, "No se encontró el empleado con ese ID."
+                    
+            except Exception as e:
+                conn.rollback()
+                return False, f"Error de base de datos: {str(e)}"
+            finally:
+                conn.close()

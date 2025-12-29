@@ -1,5 +1,8 @@
 from models.kardex_dao import KardexDAO
 from logics.vacation_service import VacationService
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Border, Side
+from openpyxl.utils import get_column_letter
 
 class ReportService:
     def __init__(self):
@@ -83,3 +86,100 @@ class ReportService:
         response["totales"]["saldo_final"] = current_balance
         
         return response
+    
+    def export_kardex_excel(self, id_contrato, f_ini, f_fin, filepath, employee_name="Kardex"):
+        """
+        Genera un archivo Excel con el reporte de Kardex idéntico al de la pantalla.
+        """
+        try:
+            # 1. REUTILIZAR LA LÓGICA DE CÁLCULO
+            # Usamos el mismo método que alimenta la vista para asegurar consistencia
+            data = self.get_kardex_report_data(id_contrato, f_ini, f_fin)
+            
+            # 2. CREAR LIBRO Y HOJA
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            # ws.title = "Kardex Vacaciones"
+
+                        # --- LIMPIEZA DEL NOMBRE DE LA HOJA ---
+            # Quitamos caracteres prohibidos por Excel: [ ] : * ? / \
+            invalid_chars = ['[', ']', ':', '*', '?', '/', '\\']
+            clean_name = employee_name
+            for char in invalid_chars:
+                clean_name = clean_name.replace(char, '')
+            
+            # Excel limita el nombre de la hoja a 31 caracteres
+            ws.title = clean_name[:30] 
+            
+            # 3. ESTILOS
+            header_font = Font(bold=True, color="FFFFFF")
+            header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+            bold_font = Font(bold=True)
+            
+            # 4. ENCABEZADOS
+            headers = ["Fecha", "Tipo Movimiento", "Detalle / Observación", "Debe (Devengado)", "Haber (Ganado)", "Saldo"]
+            ws.append(headers)
+            
+            for col_num, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col_num)
+                cell.font = header_font
+                cell.fill = header_fill
+
+            # 5. FILA SALDO ANTERIOR (Si aplica)
+            if data["saldo_anterior"] != 0 or f_ini:
+                ws.append([
+                    f_ini if f_ini else "---",
+                    "SALDO ANTERIOR",
+                    "Arrastre de periodo previo",
+                    "",
+                    "",
+                    data['saldo_anterior']
+                ])
+                # Poner en negrita la fila del saldo anterior
+                for cell in ws[ws.max_row]:
+                    cell.font = bold_font
+
+            # 6. MOVIMIENTOS
+            for row in data["movimientos"]:
+                ws.append([
+                    row['fecha'],
+                    row['tipo'],
+                    row['detalle'],
+                    row['debe'] if row['debe'] > 0 else "",
+                    row['haber'] if row['haber'] > 0 else "",
+                    row['saldo']
+                ])
+                
+                # Si es proyección, quizás ponerlo en cursiva (opcional)
+                if row.get('es_proyeccion'):
+                    for cell in ws[ws.max_row]:
+                        cell.font = Font(italic=True, color="555555")
+
+            # 7. TOTALES
+            tot = data["totales"]
+            ws.append([
+                "", 
+                "TOTALES", 
+                "",
+                tot['debe'],
+                tot['haber'],
+                tot['saldo_final']
+            ])
+            # Estilo fila totales
+            last_row = ws.max_row
+            for col in range(1, 7):
+                cell = ws.cell(row=last_row, column=col)
+                cell.font = bold_font
+                cell.fill = PatternFill(start_color="DCE6F1", fill_type="solid")
+
+            # 8. AJUSTAR ANCHO DE COLUMNAS
+            column_widths = [12, 25, 40, 15, 15, 15]
+            for i, width in enumerate(column_widths, 1):
+                ws.column_dimensions[get_column_letter(i)].width = width
+
+            # 9. GUARDAR
+            wb.save(filepath)
+            return True, "Reporte exportado correctamente."
+
+        except Exception as e:
+            return False, f"Error al exportar Excel: {str(e)}"

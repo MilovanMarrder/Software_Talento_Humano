@@ -359,11 +359,16 @@ class CatalogsDAO:
         finally:
             conn.close()
 
+
     def get_only_vacation_types_combo(self):
-        """Retorna solo los tipos de inasistencia marcados como 'descuenta_vacaciones'"""
+        """Retorna los tipos de inasistencia que afectan el saldo de vacaciones"""
         conn = self.db.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id_tipo, nombre_tipo FROM cat_tipos_inasistencia WHERE descuenta_vacaciones = 1")
-        rows = cursor.fetchall()
-        conn.close()
-        return rows
+        try:
+            # Usamos 'cuenta_afectada' que es el estándar que definimos para el Kardex
+            query = "SELECT id_tipo, nombre_tipo FROM cat_tipos_inasistencia WHERE cuenta_afectada = 'ORDINARIA'"
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            return rows
+        finally:
+            conn.close()
