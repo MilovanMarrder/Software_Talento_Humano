@@ -50,31 +50,6 @@ class ReportsView(ttk.Frame):
         )
 
 #----------------------------------------------FIN-SECCIÓN DE REPORTES-------------------------------------------
-    # def _create_report_section_attemporal(self, title, filename_prefix, export_method):
-    #     """
-    #     Caja de reporte sin un periodo en especifico.
-    #     Pensado para reportes de descarga de tablas de la base de datos.
-    #     """
-    #     card = ttk.Labelframe(self.main_container, text=title, padding=15)
-    #     card.pack(fill=X, pady=10, anchor="n")
-
-    #     row = ttk.Frame(card)
-    #     row.pack(fill=X)
-    #     # --- Barra de progreso (oculta) ---
-    #     progress = ttk.Progressbar(card, mode='indeterminate', bootstyle="success-striped")
-
-    #     # --- Botón de Generar ---
-    #     # Usamos una función lambda para pasar los widgets específicos de esta card
-    #     btn_generar = ttk.Button(
-    #         row, 
-    #         text="Generar Excel", 
-    #         bootstyle="success",
-    #         command=lambda: self._handle_generate_click_no_period(
-    #           btn_generar, progress, filename_prefix, export_method
-    #         )
-    #     )
-    #     btn_generar.pack(side=LEFT)
-
 
     def _create_report_section(self, title, filename_prefix, export_method):
         """Crea una fila de controles para un reporte específico"""
@@ -116,29 +91,6 @@ class ReportsView(ttk.Frame):
         )
         btn_generar.pack(side=LEFT)
 
-    # def _handle_generate_click_no_period(self, btn, progress, prefix, method):
-    #     """Lógica genérica para el botón de generar"""
-
-    #     filename = f"{prefix}_.xlsx"
-    #     filepath = filedialog.asksaveasfilename(
-    #         defaultextension=".xlsx",
-    #         filetypes=[("Excel Files", "*.xlsx")],
-    #         initialfile=filename,
-    #         title="Guardar Reporte"
-    #     )
-
-    #     if not filepath:
-    #         return
-
-    #     # Bloquear UI de esta card específica
-    #     self._set_loading_state(True,  btn, progress)
-
-    #     # Ejecutar en hilo separado
-    #     thread = threading.Thread(
-    #         target=self._run_export_logic, 
-    #         args=(method, filepath,  btn, progress)
-    #     )
-    #     thread.start()
 
     def _handle_generate_click(self, combo_mes, spin_anio, btn, progress, prefix, method):
         """Lógica genérica para el botón de generar"""
@@ -185,20 +137,6 @@ class ReportsView(ttk.Frame):
         else:
             messagebox.showerror("Error", message)
 
-    # def _set_loading_state(self, is_loading, combo, spin, btn, progress):
-    #     """Habilita o deshabilita los widgets de una card específica"""
-    #     if is_loading:
-    #         btn.config(state="disabled", text="Generando...")
-    #         combo.config(state="disabled")
-    #         spin.config(state="disabled")
-    #         progress.pack(fill=X, pady=(10, 0))
-    #         progress.start(10)
-    #     else:
-    #         progress.stop()
-    #         progress.pack_forget()
-    #         btn.config(state="normal", text="Generar Excel")
-    #         combo.config(state="readonly")
-    #         spin.config(state="normal")
     def _create_report_with_input_section(self, title, filename_prefix, export_method):
         """Crea una card que requiere cargar un archivo antes de generar"""
         card = ttk.Labelframe(self.main_container, text=title, padding=15)
