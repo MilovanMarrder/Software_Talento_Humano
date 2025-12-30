@@ -1,6 +1,7 @@
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from views import styles
+from views.modules.payroll_view import PayrollView
 
 # Importaciones de vistas
 from views.modules.employees_view import EmployeesView
@@ -64,6 +65,7 @@ class MainWindow(ttk.Frame):
         menu_items = [
             ("Empleados", "primary"),
             ("Contratos", "primary"),
+            ("Nóminas", "primary"),
             ("Inasistencias", "primary"),
             ("Saldo Vacaciones", "primary"),
             ("Reportes", "primary"),
@@ -117,6 +119,9 @@ class MainWindow(ttk.Frame):
             
         elif modulo == "Reportes":
             ReportsView(self.content_frame, self.controller)
+        
+        elif modulo == "Nóminas":
+            PayrollView(self.content_frame, self.controller)
             
         else:
             # Placeholder para módulos no hechos aún
