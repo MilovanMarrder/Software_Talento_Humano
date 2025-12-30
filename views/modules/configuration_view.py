@@ -6,21 +6,25 @@ from models.catalogs_dao import CatalogsDAO
 class ConfigurationView(ttk.Frame):
     def __init__(self, parent, controller=None):
         super().__init__(parent)
-        self.pack(fill=BOTH, expand=True)
         self.controller = controller
         
         ttk.Label(self, text="Configuración de Catálogos del Sistema", font=("Segoe UI", 18, "bold")).pack(pady=10)
         
+
+        self.cat_dao = CatalogsDAO()
+        self.dao = self.cat_dao # Alias para simplificar llamadas
+
+
         self.notebook = ttk.Notebook(self, bootstyle="primary")
+
         self.notebook.pack(fill=BOTH, expand=True, padx=10, pady=10)
-        
-        self.dao = CatalogsDAO()
-        
+        self.pack(fill=BOTH, expand=True)
         # 1. Pestañas Básicas (Texto simple)
         self._init_basic_tabs()
         
         # 2. Pestañas de Asistencia (Avanzadas)
         self._init_attendance_tabs()
+
 
     def _init_basic_tabs(self):
         # DEPARTAMENTOS
@@ -80,45 +84,62 @@ class ConfigurationView(ttk.Frame):
         ), text="Jornadas")
 
     def _init_attendance_tabs(self):
-        # A. CATEGORÍAS MACRO
-        self.notebook.add(CatalogTab(
-            self.notebook, "Categorías Inasistencia", ("ID", "Categoría Macro"),
-            self.dao.get_categorias_inasistencia, self.dao.crud_categoria_inasistencia,
-            fields=[("Nombre Categoría:", "text")]
-        ), text="Inasistencias (Categorías)")
+            """ Inicializa las pestañas relacionadas a RRHH / Asistencia """
+            
+            # --- A. REGLAS VACACIONES ---
+            self.notebook.add(CatalogTab(
+                self.notebook, 
+                "Reglas de Antigüedad",
+                # Columnas de la Tabla (Visuales)
+                ("ID", "Años Antigüedad", "Días a Otorgar"),
+                # Métodos del DAO
+                self.cat_dao.get_reglas_vacaciones,
+                self.cat_dao.crud_regla_vacacion,
+                # Campos del Formulario (Etiqueta, Tipo)
+                fields=[
+                    ("Años Cumplidos:", "text"),
+                    ("Días Vacaciones:", "text")
+                ]
+            ), text="Reglas Vacaciones")
 
-        # B. TIPOS ESPECÍFICOS
-        # Obtenemos la lista de categorías para llenar el Combo: [(id, nombre), ...]
-        cats_raw = self.dao.get_categorias_inasistencia()
-        # ORDINARIA = Descuenta | NINGUNA = No Descuenta
-        opciones_descuento = [("NINGUNA", "NO Descuenta Saldo"), ("ORDINARIA", "SÍ Descuenta Saldo (Ord)")]
-        
-        self.notebook.add(CatalogTab(
-            self.notebook, "Tipos de Inasistencia", 
-            ("ID", "Descripción", "Categoría", "¿Descuenta?", "¿Goce Sueldo?"),
-            self.dao.get_tipos_inasistencia, self.dao.crud_tipo_inasistencia,
-            fields=[
-                ("Descripción:", "text"),
-                ("Categoría:", "combo", cats_raw),
-                ("Afecta Vacaciones:", "combo", opciones_descuento), # Usamos lista simple
-                ("Con Goce de Sueldo:", "checkbox")
-            ]
-        ), text="Inasistencias (Tipos)")
-        
-        # C. REGLAS DE VACACIONES (Matriz)
-        vacation_types = self.dao.get_only_vacation_types_combo()
-        
-        self.notebook.add(CatalogTab(
-            self.notebook, "Reglas de Antigüedad", 
-            ("ID", "Tipo Vacación", "Año Antigüedad", "Días a Otorgar", "ID Tipo Raw"),
-            self.dao.get_reglas_vacaciones, self.dao.crud_regla_vacacion,
-            fields=[
-                ("Tipo de Vacación:", "combo", vacation_types),
-                ("Año de Antigüedad (1, 2...):", "text"),
-                ("Días a Otorgar:", "text")
-            ]
-        ), text="Reglas Vacaciones")
+            # --- B. CATEGORÍAS (Padre) ---
+            self.notebook.add(CatalogTab(
+                self.notebook, 
+                "Categorías de Inasistencia",
+                ("ID", "Nombre Categoría"),
+                self.cat_dao.get_categorias_inasistencia, 
+                self.cat_dao.crud_categoria_inasistencia,
+                fields=[
+                    ("Nombre Categoría:", "text")
+                ]
+            ), text="Categorías Inasistencia")
 
+            # --- C. TIPOS DE INASISTENCIA (Hijo) ---
+            
+            # 1. Preparamos las listas para los Comboboxes
+            cats_source = self.cat_dao.get_categorias_combo() # Trae [(id, nombre), ...]
+            
+            # Para el impacto, el formato debe ser (VALOR_BD, ETIQUETA_VISUAL)
+            impacto_source = [
+                ("NINGUNA", "NO Descuenta Saldo"), 
+                ("ORDINARIA", "SÍ Descuenta (Vacaciones)")
+            ]
+
+            # 2. Creamos la pestaña
+            self.notebook.add(CatalogTab(
+                self.notebook, 
+                "Tipos de Inasistencia",
+                # Columnas VISUALES de la tabla (Las ocultas se manejan internamente)
+                ("ID", "Descripción", "Categoría", "¿Descuenta?"),
+                self.cat_dao.get_tipos_inasistencia,
+                self.cat_dao.crud_tipo_inasistencia,
+                fields=[
+                    ("Nombre Tipo:", "text"),
+                    ("Categoría:", "combo", cats_source), 
+                    ("Impacto en Saldo:", "combo", impacto_source),
+                    ("¿Con Goce de Sueldo?:", "checkbox")
+                ]
+            ), text="Tipos de Inasistencia")
 
 class CatalogTab(ttk.Frame):
     """

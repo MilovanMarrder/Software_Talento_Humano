@@ -365,11 +365,11 @@ class ContractsView(ttk.Frame):
     def save_contract(self):
             # 1. Validaciones de Integridad (Guard Clauses)
             if not self.current_employee_id: 
-                return Messagebox.show_warning("Falta seleccionar un empleado", "Advertencia")
+                return Messagebox.show_warning("Inasistencia seleccionar un empleado", "Advertencia")
             if not self.cb_puesto.get(): 
-                return Messagebox.show_warning("Falta seleccionar el puesto", "Advertencia")
+                return Messagebox.show_warning("Inasistencia seleccionar el puesto", "Advertencia")
             if not self.cb_jornada.get():
-                return Messagebox.show_warning("Falta seleccionar la jornada laboral", "Advertencia")
+                return Messagebox.show_warning("Inasistencia seleccionar la jornada laboral", "Advertencia")
             
             # Validación de Costos 100%
             total = sum(x[1] for x in self.cost_distribution_list)

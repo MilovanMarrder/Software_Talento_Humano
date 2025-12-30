@@ -55,7 +55,7 @@ class AttendanceView(ttk.Frame):
         main_frame.pack(fill=BOTH, expand=True, padx=10, pady=5)
 
         # --- COLUMNA IZQUIERDA: FORMULARIO DE REGISTRO ---
-        form_frame = ttk.Labelframe(main_frame, text="Registrar Nueva Falta", padding=10, bootstyle="primary")
+        form_frame = ttk.Labelframe(main_frame, text="Registrar Nueva Inasistencia", padding=10, bootstyle="primary")
         form_frame.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 5))
 
         # Contrato
@@ -217,9 +217,9 @@ class AttendanceView(ttk.Frame):
             self.tree.insert("", END, values=r[:5]) # Omitimos estado por espacio si queremos
 
     def save(self):
-            if not self.current_emp_id: return Messagebox.show_warning("Falta empleado")
-            if not self.cb_contrato.get(): return Messagebox.show_warning("Falta contrato")
-            if not self.cb_tipo.get(): return Messagebox.show_warning("Falta tipo")
+            if not self.current_emp_id: return Messagebox.show_warning("Inasistencia empleado")
+            if not self.cb_contrato.get(): return Messagebox.show_warning("Inasistencia contrato")
+            if not self.cb_tipo.get(): return Messagebox.show_warning("Inasistencia tipo")
 
             # IDs
             txt_contrato = self.cb_contrato.get()

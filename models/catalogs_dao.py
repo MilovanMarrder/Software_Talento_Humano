@@ -174,19 +174,43 @@ class CatalogsDAO:
         finally:
             conn.close()
 
-    # --- CRUD CATEGORÍAS INASISTENCIA (ELIMINADO / DUMMY) ---
-    # Como la tabla no existe, estos métodos retornarían error. 
-    # Dejamos listas vacías para evitar crash si la UI los llama.
+# --- CRUD CATEGORÍAS INASISTENCIA  ---
     def get_categorias_inasistencia(self):
-        return [] 
+        # Retorna lista completa para la tabla de configuración
+        return self._get_all("cat_categorias_inasistencia", "id_categoria", "nombre_categoria")
+
+    def get_categorias_combo(self):
+        """Retorna lista (id, nombre) para llenar el Combobox al crear un Tipo"""
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id_categoria, nombre_categoria FROM cat_categorias_inasistencia ORDER BY nombre_categoria")
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
 
     def crud_categoria_inasistencia(self, action, id_item=None, nombre=None):
-        return False, "Funcionalidad deshabilitada en esta versión."
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            if action == 'INSERT':
+                cursor.execute("INSERT INTO cat_categorias_inasistencia (nombre_categoria) VALUES (?)", (nombre,))
+            elif action == 'UPDATE':
+                cursor.execute("UPDATE cat_categorias_inasistencia SET nombre_categoria=? WHERE id_categoria=?", (nombre, id_item))
+            elif action == 'DELETE':
+                cursor.execute("DELETE FROM cat_categorias_inasistencia WHERE id_categoria=?", (id_item,))
+            conn.commit()
+            return True, "Operación exitosa"
+        except sqlite3.IntegrityError:
+            return False, "No se puede eliminar: Existen Tipos de Inasistencia vinculados a esta categoría."
+        except Exception as e:
+            return False, f"Error: {e}"
+        finally:
+            conn.close()
 
-    # --- CRUD TIPOS INASISTENCIA (CORREGIDO) ---
+    # --- CRUD TIPOS INASISTENCIA (CORREGIDO CON JOIN Y REMUNERADO) ---
     def get_tipos_inasistencia(self):
         """
-        ### CORRECCIÓN: Se eliminó JOIN con cat_categorias_inasistencia.
+        Retorna datos enriquecidos uniendo con Categorías.
         """
         conn = self.db.get_connection()
         cursor = conn.cursor()
@@ -194,15 +218,17 @@ class CatalogsDAO:
             SELECT 
                 t.id_tipo, 
                 t.nombre_tipo, 
-                'General' as nombre_categoria, -- Dummy value
+                COALESCE(c.nombre_categoria, 'Sin Categoría') as nombre_categoria, -- JOIN Real
                 CASE 
                     WHEN t.cuenta_afectada = 'ORDINARIA' THEN 'Sí' 
                     ELSE 'No' 
                 END as descuenta_saldo,
-                t.id_categoria,
-                t.cuenta_afectada
+                t.id_categoria,      -- Raw Index 4
+                t.cuenta_afectada,   -- Raw Index 5
+                t.remunerado         -- Raw Index 6
             FROM cat_tipos_inasistencia t
-            ORDER BY t.nombre_tipo
+            LEFT JOIN cat_categorias_inasistencia c ON t.id_categoria = c.id_categoria
+            ORDER BY c.nombre_categoria, t.nombre_tipo
         """
         cursor.execute(query)
         rows = cursor.fetchall()
@@ -210,33 +236,36 @@ class CatalogsDAO:
         return rows
 
     def crud_tipo_inasistencia(self, action, id_item=None, nombre=None, id_cat=None, cuenta_afectada='NINGUNA', remunerado=0):
-            conn = self.db.get_connection()
-            try:
-                cursor = conn.cursor()
-                remunerado = int(remunerado) if remunerado else 0
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            # Sanitización
+            remunerado = int(remunerado) if remunerado else 0
+            if not id_cat: id_cat = 1 # Fallback a categoría 1 si viene nulo
 
-                if action == 'INSERT':
-                    cursor.execute("""
-                        INSERT INTO cat_tipos_inasistencia (nombre_tipo, id_categoria, cuenta_afectada) 
-                        VALUES (?, ?, ?)
-                    """, (nombre, id_cat, cuenta_afectada))
-                
-                elif action == 'UPDATE':
-                    cursor.execute("""
-                        UPDATE cat_tipos_inasistencia 
-                        SET nombre_tipo=?, id_categoria=?, cuenta_afectada=?
-                        WHERE id_tipo=?
-                    """, (nombre, id_cat, cuenta_afectada, id_item))
-                
-                elif action == 'DELETE':
-                    cursor.execute("DELETE FROM cat_tipos_inasistencia WHERE id_tipo=?", (id_item,))
-                
-                conn.commit()
-                return True, "Operación exitosa"
-            except Exception as e:
-                return False, f"Error: {e}"
-            finally:
-                conn.close()
+            if action == 'INSERT':
+                cursor.execute("""
+                    INSERT INTO cat_tipos_inasistencia (nombre_tipo, id_categoria, cuenta_afectada, remunerado) 
+                    VALUES (?, ?, ?, ?)
+                """, (nombre, id_cat, cuenta_afectada, remunerado))
+            
+            elif action == 'UPDATE':
+                cursor.execute("""
+                    UPDATE cat_tipos_inasistencia 
+                    SET nombre_tipo=?, id_categoria=?, cuenta_afectada=?, remunerado=? 
+                    WHERE id_tipo=?
+                """, (nombre, id_cat, cuenta_afectada, remunerado, id_item))
+            
+            elif action == 'DELETE':
+                cursor.execute("DELETE FROM cat_tipos_inasistencia WHERE id_tipo=?", (id_item,))
+            
+            conn.commit()
+            return True, "Operación exitosa"
+        except Exception as e:
+            return False, f"Error: {e}"
+        finally:
+            conn.close()
 
     # --- CRUD TIPOS DE CONTRATO ---
     def crud_tipo_contrato(self, action, id_item=None, nombre=None):
@@ -280,40 +309,42 @@ class CatalogsDAO:
             return False, str(e)
         finally:
             conn.close()
-
-    # --- CRUD REGLAS VACACIONES (CORREGIDO) ---
+            
+# --- CRUD REGLAS VACACIONES (CORREGIDO FINAL) ---
     def get_reglas_vacaciones(self):
         """
-        ### CORRECCIÓN: Eliminado JOIN con cat_categorias_inasistencia
+        Recupera la tabla de antigüedad.
+        CORRECCIÓN: Eliminada referencia a 'id_tipo_inasistencia'.
+        Solo trae: ID, Años, Días.
         """
         conn = self.db.get_connection()
         cursor = conn.cursor()
         query = """
             SELECT 
-                r.id_regla, 
-                ti.nombre_tipo, -- Ya no mostramos la categoría
-                r.anios_antiguedad,
-                r.dias_otorgar,
-                r.id_tipo_inasistencia
-            FROM cat_reglas_vacaciones r
-            JOIN cat_tipos_inasistencia ti ON r.id_tipo_inasistencia = ti.id_tipo
-            ORDER BY ti.nombre_tipo, r.anios_antiguedad
+                id_regla, 
+                anios_antiguedad,
+                dias_otorgar
+            FROM cat_reglas_vacaciones 
+            ORDER BY anios_antiguedad
         """
         cursor.execute(query)
         rows = cursor.fetchall()
         conn.close()
         return rows
 
-    def crud_regla_vacacion(self, action, id_item=None, id_tipo_inasistencia=None, anios=None, dias=None):
+    def crud_regla_vacacion(self, action, id_item=None, anios=None, dias=None):
+        """
+        CORRECCIÓN: Eliminado parámetro 'id_tipo_inasistencia' de la firma y del SQL.
+        """
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
             if action == 'INSERT':
-                cursor.execute("INSERT INTO cat_reglas_vacaciones (id_tipo_inasistencia, anios_antiguedad, dias_otorgar) VALUES (?, ?, ?)", 
-                               (id_tipo_inasistencia, anios, dias))
+                cursor.execute("INSERT INTO cat_reglas_vacaciones (anios_antiguedad, dias_otorgar) VALUES (?, ?)", 
+                               (anios, dias))
             elif action == 'UPDATE':
-                cursor.execute("UPDATE cat_reglas_vacaciones SET id_tipo_inasistencia=?, anios_antiguedad=?, dias_otorgar=? WHERE id_regla=?", 
-                               (id_tipo_inasistencia, anios, dias, id_item))
+                cursor.execute("UPDATE cat_reglas_vacaciones SET anios_antiguedad=?, dias_otorgar=? WHERE id_regla=?", 
+                               (anios, dias, id_item))
             elif action == 'DELETE':
                 cursor.execute("DELETE FROM cat_reglas_vacaciones WHERE id_regla=?", (id_item,))
             conn.commit()
@@ -322,7 +353,6 @@ class CatalogsDAO:
             return False, str(e)
         finally:
             conn.close()
-
     def get_only_vacation_types_combo(self):
         conn = self.db.get_connection()
         cursor = conn.cursor()

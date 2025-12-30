@@ -62,7 +62,7 @@ class AttendanceView(ttk.Frame):
         main_frame.pack(fill=BOTH, expand=True, padx=10, pady=5)
 
         # --- COLUMNA IZQUIERDA: FORMULARIO ---
-        form_frame = ttk.Labelframe(main_frame, text="Registrar Nueva Falta", padding=10, bootstyle="primary")
+        form_frame = ttk.Labelframe(main_frame, text="Registrar Nueva Inasistencia", padding=10, bootstyle="primary")
         form_frame.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 5))
 
         # Contrato
