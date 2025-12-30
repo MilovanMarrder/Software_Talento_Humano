@@ -49,6 +49,16 @@ class ReportsView(ttk.Frame):
             export_method=self.service.export_database_to_excel 
         )
 
+# --------------------------------------------------
+        # SECCIÓN DE MANTENIMIENTO (IMPORTACIÓN)
+        # --------------------------------------------------
+        # Separador visual
+        ttk.Separator(self.main_container, orient=HORIZONTAL).pack(fill=X, pady=20)
+        # lbl_danger = ttk.Label(self.main_container, text="Zona de Peligro - Restauración", font=("Helvetica", 12, "bold"), bootstyle="danger")
+        # lbl_danger.pack(anchor="w", pady=(0, 10))
+
+        self._create_import_section()
+
 #----------------------------------------------FIN-SECCIÓN DE REPORTES-------------------------------------------
 
     def _create_report_section(self, title, filename_prefix, export_method):
@@ -343,3 +353,76 @@ class ReportsView(ttk.Frame):
                     if isinstance(w, ttk.Combobox): w.config(state="readonly")
                     else: w.config(state="normal")
                 except: pass
+
+
+    # --- NUEVO MÉTODO PARA UI DE IMPORTACIÓN ---
+    def _create_import_section(self):
+        """Crea la tarjeta para importar/restaurar la BD"""
+        card = ttk.Labelframe(self.main_container, text="Restaurar Base de Datos desde Excel", padding=15, bootstyle="danger")
+        card.pack(fill=X, pady=10, anchor="n")
+
+        row = ttk.Frame(card)
+        row.pack(fill=X)
+
+        lbl_info = ttk.Label(row, text="⚠ ADVERTENCIA: Esta acción borrará todos los datos actuales y los reemplazará con los del Excel.", bootstyle="danger")
+        lbl_info.pack(side=LEFT, padx=(0, 20))
+
+        progress = ttk.Progressbar(card, mode='indeterminate', bootstyle="danger-striped")
+
+        btn_importar = ttk.Button(
+            row, 
+            text="Seleccionar Archivo y Restaurar", 
+            bootstyle="danger",
+            command=lambda: self._handle_import_click(btn_importar, progress)
+        )
+        btn_importar.pack(side=RIGHT)
+
+    def _handle_import_click(self, btn, progress):
+        """Manejador del botón importar"""
+        # 1. Confirmación de seguridad
+        confirm = messagebox.askyesno(
+            "Confirmación Crítica", 
+            "¿Está SEGURO de que desea restaurar la base de datos?\n\n"
+            "Esto ELIMINARÁ PERMANENTEMENTE los datos actuales y cargará los del archivo Excel.\n"
+            "Esta acción no se puede deshacer.",
+            icon='warning'
+        )
+        if not confirm:
+            return
+
+        # 2. Seleccionar archivo
+        input_path = filedialog.askopenfilename(
+            filetypes=[("Excel Files", "*.xlsx *.xls")],
+            title="Seleccionar archivo de respaldo (Backup)"
+        )
+        if not input_path:
+            return
+
+        # 3. Bloquear UI
+        self._set_loading_state(True, btn, progress) # Reutilizamos tu método polimórfico existente
+
+        # 4. Hilo
+        thread = threading.Thread(
+            target=self._run_import_logic,
+            args=(input_path, btn, progress)
+        )
+        thread.start()
+
+    def _run_import_logic(self, input_path, btn, progress):
+        """Ejecuta la importación en segundo plano"""
+        try:
+            success, message = self.service.import_database_from_excel(input_path)
+        except Exception as e:
+            success, message = False, f"Error inesperado: {str(e)}"
+        
+        self.after(0, lambda: self._on_import_finished(success, message, btn, progress))
+
+    def _on_import_finished(self, success, message, btn, progress):
+        """Restaura UI tras importar"""
+        self._set_loading_state(False, btn, progress)
+        
+        if success:
+            messagebox.showinfo("Restauración Exitosa", message)
+            # Opcional: Sugerir reiniciar la app para refrescar todas las vistas cacheadas
+        else:
+            messagebox.showerror("Error en Restauración", message)
