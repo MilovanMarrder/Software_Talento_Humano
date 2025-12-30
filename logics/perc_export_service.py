@@ -190,97 +190,125 @@ class PercExportService:
     # --------------------------------------------------------------------------
 
     def import_database_from_excel(self, input_path):
-        """
-        Restaura la BD aplicando limpieza, validación de esquema y manejo de columnas generadas.
-        Evita errores por columnas calculadas (TOTAL_PAGADO) o campos obsoletos (ID_DEPARTAMENTO).
-        """
-        conn = self.db.get_connection()
-        if not conn: return False, "Sin conexión a BD."
+            """
+            Restaura la BD aplicando limpieza, validación de esquema y manejo de columnas generadas.
+            Incluye verificación final de integridad referencial.
+            """
+            conn = self.db.get_connection()
+            if not conn: return False, "Sin conexión a BD."
 
-        try:
-            # 1. Leer Excel completo
             try:
-                # DEFINIMOS LAS COLUMNAS QUE JAMÁS DEBEN SER NÚMEROS
-                # Esto obliga a Pandas a leerlas como texto, preservando "0801"
-                text_cols = {
-                    'dni': str,
-                    'codigo': str,
-                    'dni_perc': str,
-                    'codigo_up': str,       # Unidades de producción
-                    'codigo_interno': str,  # Departamentos
-                    'Identificación': str   # Por si importas reportes
-                }
+                # 1. Leer Excel completo con Conversión de Tipos
+                try:
+                    # Diccionario de seguridad para preservar ceros a la izquierda
+                    text_cols = {
+                        'dni': str,
+                        'codigo': str,
+                        'dni_perc': str,
+                        'codigo_up': str,       # Unidades de producción
+                        'codigo_interno': str,  # Departamentos
+                        'Identificación': str   # Por si importas reportes exportados
+                    }
+                    
+                    # converters=text_cols fuerza a Pandas a leer esas columas como Texto puro
+                    xls_dict = pd.read_excel(input_path, sheet_name=None, converters=text_cols)
+                except Exception as e:
+                    return False, f"No se pudo leer el archivo Excel: {e}"
+
+                cursor = conn.cursor()
                 
-                # Pasamos 'converters' (Pandas ignora las columnas que no existen en la hoja)
-                xls_dict = pd.read_excel(input_path, sheet_name=None, converters=text_cols)
-            except Exception as e:
-                return False, f"No se pudo leer el archivo Excel: {e}"
+                # 2. Configuración para Inserción Masiva
+                cursor.execute("PRAGMA foreign_keys = OFF") # Apagamos validación temporalmente
+                cursor.execute("BEGIN TRANSACTION")         # Iniciamos bloque atómico
 
-            cursor = conn.cursor()
-            
-            # 2. Configuración para Inserción Masiva
-            cursor.execute("PRAGMA foreign_keys = OFF") # Apagar FKs para permitir cualquier orden
-            cursor.execute("BEGIN TRANSACTION")         # Atomicidad total
+                # Obtener tablas que REALMENTE existen en la BD (Target)
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+                db_tables = [row[0] for row in cursor.fetchall()]
 
-            # Obtener tablas que REALMENTE existen en la BD (Target)
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-            db_tables = [row[0] for row in cursor.fetchall()]
+                tables_processed = 0
+                logs = []
 
-            tables_processed = 0
-            logs = []
+                for sheet_name, df in xls_dict.items():
+                    table_name = sheet_name.strip()
 
-            for sheet_name, df in xls_dict.items():
-                table_name = sheet_name.strip()
+                    if table_name in db_tables:
+                        # A. Limpieza de Datos (Quitar espacios, formatear fechas, NaN -> None)
+                        df = self._clean_dataframe(df)
 
-                if table_name in db_tables:
-                    # A. Limpieza de Datos
-                    df = self._clean_dataframe(df)
+                        # B. Análisis de Columnas
+                        # Obtenemos las columnas válidas de la tabla destino (sin generadas)
+                        valid_columns = self._get_writable_columns(cursor, table_name)
+                        
+                        # Intersección: Solo columnas que existen en Excel Y en BD
+                        cols_to_import = [c for c in df.columns if c in valid_columns]
+                        
+                        if not cols_to_import:
+                            logs.append(f"⚠ {table_name}: Se omitió (sin columnas coincidentes).")
+                            continue
 
-                    # B. Análisis de Columnas
-                    # Obtenemos las columnas válidas de la tabla destino (sin generadas)
-                    valid_columns = self._get_writable_columns(cursor, table_name)
+                        # Filtramos el DF final
+                        df_final = df[cols_to_import]
+
+                        # C. Wipe & Load (Borrar y Cargar)
+                        cursor.execute(f"DELETE FROM {table_name}")
+                        
+                        # Insertar (usamos chunksize para prevenir errores de memoria)
+                        df_final.to_sql(table_name, conn, if_exists='append', index=False, chunksize=500)
+                        
+                        tables_processed += 1
+                        logs.append(f"✅ {table_name}: {len(df_final)} registros importados.")
+
+                # 3. Validación preliminar
+                if tables_processed == 0:
+                    conn.rollback()
+                    return False, "El Excel no contiene ninguna hoja que coincida con las tablas del sistema."
+
+                # ------------------------------------------------------------------
+                # 4. VERIFICACIÓN DE INTEGRIDAD REFERENCIAL (CRÍTICO)
+                # ------------------------------------------------------------------
+                # Antes de hacer COMMIT, reactivamos las llaves foráneas y buscamos huérfanos.
+                
+                cursor.execute("PRAGMA foreign_keys = ON")
+                
+                # foreign_key_check revisa toda la BD buscando violaciones
+                cursor.execute("PRAGMA foreign_key_check")
+                integrity_errors = cursor.fetchall()
+
+                if integrity_errors:
+                    # Si hay errores, construimos un reporte y cancelamos todo.
+                    error_msg = "⛔ ERROR DE INTEGRIDAD: La importación se canceló porque el archivo contiene inconsistencias:\n"
                     
-                    # Intersección: Solo columnas que existen en Excel Y en BD
-                    cols_to_import = [c for c in df.columns if c in valid_columns]
+                    limit = 0
+                    for err in integrity_errors:
+                        if limit < 5: # Solo mostramos los primeros 5 errores
+                            # Formato err: (table_name, rowid, target_table, fkid)
+                            tabla_origen = err[0]
+                            tabla_destino = err[2]
+                            error_msg += f"- La tabla '{tabla_origen}' referencia registros inexistentes en '{tabla_destino}'.\n"
+                        limit += 1
                     
-                    if not cols_to_import:
-                        logs.append(f"⚠ {table_name}: Se omitió (sin columnas coincidentes).")
-                        continue
-
-                    # Filtramos el DF final
-                    df_final = df[cols_to_import]
-
-                    # C. Wipe & Load
-                    cursor.execute(f"DELETE FROM {table_name}")
+                    error_msg += "\nRevise que no haya borrado registros padres (Empleados, Puestos) que son usados en otras tablas."
                     
-                    # Insertar (usamos chunksize para prevenir errores de memoria)
-                    df_final.to_sql(table_name, conn, if_exists='append', index=False, chunksize=500)
-                    
-                    tables_processed += 1
-                    logs.append(f"✅ {table_name}: {len(df_final)} registros importados.")
+                    # Lanzamos excepción manual para activar el rollback en el bloque except
+                    raise Exception(error_msg)
 
-            # 3. Finalización
-            if tables_processed == 0:
-                conn.rollback()
-                return False, "El Excel no contiene ninguna hoja que coincida con las tablas del sistema."
-
-            conn.commit()
-            
-            # Reactivar FKs
-            cursor.execute("PRAGMA foreign_keys = ON")
-            try: cursor.execute("VACUUM") 
-            except: pass
-
-            return True, "Restauración completada con éxito.\n\nDetalle:\n" + "\n".join(logs)
-
-        except Exception as e:
-            if conn:
-                conn.rollback()
-                try: conn.execute("PRAGMA foreign_keys = ON")
+                # 5. Finalización Exitosa
+                conn.commit() # ¡Solo guardamos si pasó la prueba de integridad!
+                
+                # Mantenimiento
+                try: cursor.execute("VACUUM") 
                 except: pass
-            return False, f"Error CRÍTICO durante la restauración:\n{str(e)}"
-        finally:
-            conn.close()
+
+                return True, "Restauración completada y verificada con éxito.\n\nDetalle:\n" + "\n".join(logs)
+
+            except Exception as e:
+                if conn:
+                    conn.rollback() # Revertimos cualquier cambio a la BD
+                    try: conn.execute("PRAGMA foreign_keys = ON") # Restauramos seguridad
+                    except: pass
+                return False, f"Error CRÍTICO durante la restauración:\n{str(e)}"
+            finally:
+                conn.close()
 
     # --------------------------------------------------------------------------
     # 3. HELPERS PRIVADOS (LIMPIEZA Y VALIDACIÓN)
@@ -300,7 +328,7 @@ class PercExportService:
                 df[col] = df[col].replace({'nan': None, 'None': None, '<NA>': None})
                 # Eliminar decimales fantasmas (ej: "0801.0" -> "0801")
                 df[col] = df[col].apply(lambda x: x.split('.')[0] if x and '.' in x else x)
-                
+
         # 1. Quitar espacios en strings
         df_obj = df.select_dtypes(['object'])
         if not df_obj.empty:
