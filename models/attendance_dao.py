@@ -6,7 +6,6 @@ class AttendanceDAO:
         self.db = DatabaseConnection()
 
     def get_active_contracts_by_employee(self, id_empleado):
-        """Retorna: [(id_contrato, descripcion_visual), ...]"""
         conn = self.db.get_connection()
         cursor = conn.cursor()
         query = """
@@ -64,13 +63,18 @@ class AttendanceDAO:
             conn.close()
 
     def get_tipos_inasistencia_combo(self):
+        """
+        ### CORRECCIÓN: Eliminado JOIN con cat_categorias_inasistencia.
+        Solo consulta la tabla cat_tipos_inasistencia.
+        """
         conn = self.db.get_connection()
         cursor = conn.cursor()
+        
+        # Como no hay categorías, mostramos solo el nombre del tipo
         query = """
-            SELECT t.id_tipo, c.nombre_categoria || ': ' || t.nombre_tipo, t.cuenta_afectada
+            SELECT t.id_tipo, t.nombre_tipo, t.cuenta_afectada
             FROM cat_tipos_inasistencia t
-            JOIN cat_categorias_inasistencia c ON t.id_categoria = c.id_categoria
-            ORDER BY c.nombre_categoria, t.nombre_tipo
+            ORDER BY t.nombre_tipo
         """
         cursor.execute(query)
         rows = cursor.fetchall()
@@ -91,13 +95,12 @@ class AttendanceDAO:
         conn.close()
         return round(saldo, 2)
 
-    # -------------------------------------------------------------------------
     def insert_inasistencia(self, id_con, id_tipo, f_ini, f_fin, es_horas, h_ini, h_fin, detalle, dias_manual=None):
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
             
-            # 1. Obtener jornada para cálculos
+            # 1. Obtener jornada
             cursor.execute("""
                 SELECT j.horas_diarias FROM contratos c 
                 JOIN cat_jornadas j ON c.id_jornada = j.id_jornada 
@@ -106,28 +109,24 @@ class AttendanceDAO:
             res_jornada = cursor.fetchone()
             horas_jornada = res_jornada[0] if res_jornada else 8
             
-            # 2. CÁLCULO DE DÍAS (Lógica Híbrida)
-            # Primero calculamos la referencia matemática
+            # 2. CÁLCULO DE DÍAS
             dias_calculados = TimeCalculator.calculate_duration(
                 f_ini, f_fin, es_horas, h_ini, h_fin, horas_jornada
             )
 
-            # ### CAMBIO: DECISIÓN FINAL DE DÍAS
-            # Si la UI mandó un dato manual válido, lo usamos. Si no, usamos el cálculo.
+            # Usar manual si existe
             if dias_manual is not None and dias_manual != "":
                 try:
                     dias_finales = float(dias_manual)
                 except ValueError:
-                    dias_finales = dias_calculados # Fallback si envían basura
+                    dias_finales = dias_calculados 
             else:
                 dias_finales = dias_calculados
 
-            # 3. CÁLCULO DE HORAS (Consistente con los días finales)
-            # Si es por horas, usamos el cálculo real de tiempo.
-            # Si es por días, dejamos 0 (o podríamos poner dias_finales * horas_jornada si quisieras llenar ese dato)
+            # 3. HORAS
             horas_totales = dias_finales * horas_jornada if es_horas else 0
 
-            # 4. INSERTAR INASISTENCIA
+            # 4. INSERTAR
             query_main = """
                 INSERT INTO inasistencias 
                 (id_contrato, id_tipo, fecha_inicio_real, fecha_fin_real, 
@@ -136,11 +135,11 @@ class AttendanceDAO:
             """
             cursor.execute(query_main, (
                 id_con, id_tipo, f_ini, f_fin, 
-                horas_totales, dias_finales, detalle  # ### CAMBIO: Usamos dias_finales
+                horas_totales, dias_finales, detalle
             ))
             id_inasistencia = cursor.lastrowid
             
-            # 5. VERIFICAR AFECTACIÓN AL KARDEX
+            # 5. KARDEX
             cursor.execute("SELECT cuenta_afectada FROM cat_tipos_inasistencia WHERE id_tipo = ?", (id_tipo,))
             res = cursor.fetchone()
             cuenta_afectada = res[0] if res else 'NINGUNA'
@@ -151,7 +150,6 @@ class AttendanceDAO:
                     (id_contrato, fecha_movimiento, tipo_movimiento, dias, id_referencia, observacion, cuenta_tipo)
                     VALUES (?, CURRENT_DATE, 'GOCE', ?, ?, ?, 'ORDINARIA')
                 """
-                # ### CAMBIO: Usamos dias_finales para el descuento
                 dias_kardex = -1 * abs(dias_finales) 
                 obs = f"Inasistencia #{id_inasistencia}: {detalle}"
                 cursor.execute(query_kardex, (id_con, dias_kardex, id_inasistencia, obs))

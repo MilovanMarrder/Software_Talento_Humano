@@ -225,36 +225,57 @@ class ContractDAO:
         rows = cursor.fetchall()
         conn.close()
         return rows
-
     def get_contract_details(self, id_contrato):
-        """Recupera toda la info de un contrato y sus costos para editar"""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        
-        # 1. Datos Contrato
-        cursor.execute("SELECT * FROM contratos WHERE id_contrato = ?", (id_contrato,))
-        contrato = cursor.fetchone()
-        
-        # 2. Datos Empleado (Para mostrar el nombre en el label)
-        cursor.execute("""
-            SELECT e.id_empleado, e.codigo, e.nombres, e.apellidos 
-            FROM empleados e 
-            JOIN contratos c ON e.id_empleado = c.id_empleado 
-            WHERE c.id_contrato = ?
-        """, (id_contrato,))
-        empleado = cursor.fetchone()
-        
-        # 3. Distribución Costos (Join para traer nombre de unidad)
-        cursor.execute("""
-            SELECT dc.id_unidad, up.nombre_up, dc.porcentaje
-            FROM distribucion_costos dc
-            JOIN cat_unidades_produccion up ON dc.id_unidad = up.id_unidad
-            WHERE dc.id_contrato = ?
-        """, (id_contrato,))
-        costos = cursor.fetchall()
-        
-        conn.close()
-        return contrato, empleado, costos
+            """
+            Recupera toda la info de un contrato y sus costos para editar.
+            CORRECCIÓN: Usamos columnas explícitas para evitar errores de índices si cambia la BD.
+            """
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            
+            # 1. Datos Contrato (ORDEN EXPLÍCITO)
+            # 0: id_contrato
+            # 1: id_empleado
+            # 2: id_puesto
+            # 3: id_departamento
+            # 4: id_tipo_contrato
+            # 5: id_jornada
+            # 6: fecha_inicio
+            # 7: fecha_fin
+            # 8: salario
+            # 9: fecha_inicio_kardex
+            # 10: saldo_inicial_vacaciones
+            query = """
+                SELECT 
+                    id_contrato, id_empleado, id_puesto, id_departamento, 
+                    id_tipo_contrato, id_jornada, fecha_inicio, fecha_fin, 
+                    salario, fecha_inicio_kardex, saldo_inicial_vacaciones
+                FROM contratos 
+                WHERE id_contrato = ?
+            """
+            cursor.execute(query, (id_contrato,))
+            contrato = cursor.fetchone()
+            
+            # 2. Datos Empleado (Para mostrar el nombre en el label)
+            cursor.execute("""
+                SELECT e.id_empleado, e.codigo, e.nombres, e.apellidos 
+                FROM empleados e 
+                JOIN contratos c ON e.id_empleado = c.id_empleado 
+                WHERE c.id_contrato = ?
+            """, (id_contrato,))
+            empleado = cursor.fetchone()
+            
+            # 3. Distribución Costos
+            cursor.execute("""
+                SELECT dc.id_unidad, up.nombre_up, dc.porcentaje
+                FROM distribucion_costos dc
+                JOIN cat_unidades_produccion up ON dc.id_unidad = up.id_unidad
+                WHERE dc.id_contrato = ?
+            """, (id_contrato,))
+            costos = cursor.fetchall()
+            
+            conn.close()
+            return contrato, empleado, costos
     
 # ... (métodos anteriores)
 

@@ -59,7 +59,7 @@ class PercExportService:
             # 3. Post-Procesamiento (Opcional)
             # Asegurar que 'Identificación' sea string para conservar ceros a la izquierda si los hubiera
             df['Identificación'] = df['Identificación'].astype(str)
-            df['Categoría de Empleado'] = df['Categoría de Empleado'].astype(str)
+            df['Categoría de Empleado'] = df['Categoría de Empleado'].astype(str).str.zfill(5)
 
 
             # 4. Exportar a Excel

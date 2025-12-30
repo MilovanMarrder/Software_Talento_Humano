@@ -260,70 +260,69 @@ class ContractsView(ttk.Frame):
     # --- LÓGICA DE EDICIÓN ---
 
     def _load_contract_to_form(self, id_contrato):
-        contrato, empleado, costos = self.dao.get_contract_details(id_contrato)
-        
-        # 1. Configuración Visual
-        self.selected_contract_id = id_contrato
-        self.btn_save.config(text="Actualizar Contrato", bootstyle="warning")
-        self.btn_cancel.show()
-        self.btn_delete.show()
-        
-        # 2. Empleado
-        self.current_employee_id = empleado[0]
-        self.lbl_employee_name.config(text=f"{empleado[1]} - {empleado[2]} {empleado[3]}", bootstyle="warning")
-        
-        # 3. Comboboxes (Puesto, Depto, Tipo)
-        puesto_txt = next((x[1] for x in self.puestos_data if x[0] == contrato[2]), "")
-        depto_txt = next((x[1] for x in self.deptos_data if x[0] == contrato[3]), "")
-        tipo_txt = next((x[1] for x in self.tipos_data if x[0] == contrato[4]), "")
-        
-        self.cb_puesto.set(puesto_txt)
-        self.cb_depto.set(depto_txt)
-        self.cb_tipo.set(tipo_txt)
-
-        # 4. Salario
-        self.entry_salario.delete(0, END)
-        self.entry_salario.insert(0, contrato[7] if contrato[7] else 0)
-
-        # --- AQUÍ ESTÁ LA MAGIA DE LOS NUEVOS CAMPOS ---
-        try:
-            # Índice 9: Jornada
-            id_jornada_val = contrato[9]
-            jornada_txt = next((x[1] for x in self.jornadas_data if x[0] == id_jornada_val), "")
+            # contrato trae ahora 11 columnas fijas (0 a 10)
+            contrato, empleado, costos = self.dao.get_contract_details(id_contrato)
+            
+            # 1. Configuración Visual
+            self.selected_contract_id = id_contrato
+            self.btn_save.config(text="Actualizar Contrato", bootstyle="warning")
+            self.btn_cancel.show()
+            self.btn_delete.show()
+            
+            # 2. Empleado
+            self.current_employee_id = empleado[0]
+            self.lbl_employee_name.config(text=f"{empleado[1]} - {empleado[2]} {empleado[3]}", bootstyle="warning")
+            
+            # 3. Comboboxes (Mapeo por ID)
+            # contrato[2] = id_puesto
+            # contrato[3] = id_departamento
+            # contrato[4] = id_tipo_contrato
+            # contrato[5] = id_jornada
+            
+            puesto_txt = next((x[1] for x in self.puestos_data if x[0] == contrato[2]), "")
+            depto_txt = next((x[1] for x in self.deptos_data if x[0] == contrato[3]), "")
+            tipo_txt = next((x[1] for x in self.tipos_data if x[0] == contrato[4]), "")
+            jornada_txt = next((x[1] for x in self.jornadas_data if x[0] == contrato[5]), "")
+            
+            self.cb_puesto.set(puesto_txt)
+            self.cb_depto.set(depto_txt)
+            self.cb_tipo.set(tipo_txt)
             self.cb_jornada.set(jornada_txt)
 
-            # Índice 10: Saldo Inicial
+            # 4. Datos Económicos y Vacaciones
+            # contrato[8] = Salario
+            self.entry_salario.delete(0, END)
+            self.entry_salario.insert(0, contrato[8] if contrato[8] else 0)
+
+            # contrato[10] = Saldo Inicial
             saldo_val = contrato[10]
             self.entry_saldo_ini.delete(0, END)
-            # Si es None, ponemos 0.0
             self.entry_saldo_ini.insert(0, saldo_val if saldo_val is not None else "0.0")
 
-            # Índice 11: Fecha Inicio Kardex
-            fecha_k_val = contrato[11]
-            self.date_kardex.entry.delete(0, END) # Limpiamos el entry interno
+            # contrato[9] = Fecha Inicio Kardex
+            fecha_k_val = contrato[9]
+            self.date_kardex.entry.delete(0, END)
             if fecha_k_val:
                 self.date_kardex.entry.insert(0, fecha_k_val)
-            
-        except IndexError:
-            print("Advertencia: La tupla del contrato es más corta de lo esperado (BD desactualizada en memoria).")
-        # ------------------------------------------------
 
-        # 5. Fechas Contrato (Inicio / Fin)
-        self.date_inicio.entry.delete(0, END)
-        self.date_inicio.entry.insert(0, contrato[5])
-        
-        self.date_fin.entry.delete(0, END)
-        if contrato[6]:
-            self.var_indefinido.set(False)
-            self.date_fin.entry.configure(state="normal")
-            self.date_fin.entry.insert(0, contrato[6])
-        else:
-            self.var_indefinido.set(True)
-            self.toggle_fecha_fin()
+            # 5. Fechas Contrato
+            # contrato[6] = Fecha Inicio Real
+            self.date_inicio.entry.delete(0, END)
+            self.date_inicio.entry.insert(0, contrato[6] if contrato[6] else "")
             
-        # 6. Costos
-        self.cost_distribution_list = [(c[0], c[2]) for c in costos]
-        self._refresh_cost_tree()
+            # contrato[7] = Fecha Fin
+            self.date_fin.entry.delete(0, END)
+            if contrato[7]:
+                self.var_indefinido.set(False)
+                self.date_fin.entry.configure(state="normal")
+                self.date_fin.entry.insert(0, contrato[7])
+            else:
+                self.var_indefinido.set(True)
+                self.toggle_fecha_fin()
+                
+            # 6. Costos
+            self.cost_distribution_list = [(c[0], c[2]) for c in costos]
+            self._refresh_cost_tree()
 
     def clear_form(self):
         self.selected_contract_id = None
