@@ -112,16 +112,14 @@ class PayrollDAO:
             
     # --- MÉTODO ESPECIAL PARA REPORTE/CONSULTA MASIVA ---
     def get_payroll_summary_by_period(self, anio, mes):
-        """
-        Para futura vista de Planilla Global.
-        Une con empleados y puestos.
-        """
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
             query = """
                 SELECT 
-                    e.codigo, e.nombres || ' ' || e.apellidos as empleado,
+                    nm.id_nomina,  -- <--- CAMBIO CRÍTICO: Necesitamos el ID para editar
+                    e.codigo, 
+                    e.nombres || ' ' || e.apellidos as empleado,
                     p.nombre_puesto,
                     nm.salario_base, nm.bonificaciones, nm.beneficios_laborales, nm.deducciones, nm.total_pagado,
                     nm.observaciones
@@ -134,5 +132,27 @@ class PayrollDAO:
             """
             cursor.execute(query, (anio, mes))
             return cursor.fetchall()
+        finally:
+            conn.close()
+
+    def delete_period(self, anio, mes):
+        """Elimina TODOS los registros de nómina de un mes y año específicos."""
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            # Primero contamos cuántos hay para devolver el dato informativo
+            cursor.execute("SELECT COUNT(*) FROM nominas_mensuales WHERE anio=? AND mes=?", (anio, mes))
+            count = cursor.fetchone()[0]
+            
+            if count == 0:
+                return False, "No hay registros para borrar en este periodo."
+
+            # Ejecutamos borrado
+            cursor.execute("DELETE FROM nominas_mensuales WHERE anio=? AND mes=?", (anio, mes))
+            conn.commit()
+            return True, f"Se eliminaron {count} registros del periodo {mes}/{anio}."
+        except Exception as e:
+            conn.rollback()
+            return False, f"Error al eliminar periodo: {e}"
         finally:
             conn.close()
