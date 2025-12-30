@@ -81,8 +81,6 @@ class CatalogsDAO:
         finally:
             conn.close()
 
-# ... (Dentro de CatalogsDAO) ...
-
     # --- NUEVOS MÉTODOS HELPER ---
     
     def get_grupos_perc_combo(self):
