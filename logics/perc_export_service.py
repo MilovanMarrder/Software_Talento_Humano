@@ -9,76 +9,86 @@ class PercExportService:
         self.db = DatabaseConnection()
 
     def generate_empleados_perc_excel(self, year, month, filepath):
-        """
-        Genera el reporte Excel para PERC.
-        Retorna: (Success: bool, Message: str)
-        """
-        conn = self.db.get_connection()
-        if not conn:
-            return False, "No hay conexión a base de datos."
-
-        try:
-            # 1. Definir rango de fechas del periodo seleccionado
-            # Primer día del mes
-            start_date_str = f"{year}-{int(month):02d}-01"
-            
-            # Último día del mes
-            last_day = calendar.monthrange(int(year), int(month))[1]
-            end_date_str = f"{year}-{int(month):02d}-{last_day}"
-
-            # 2. Query SQL
-            # Nota la lógica de fechas:
-            # El contrato debe haber empezado antes o durante el fin de mes
-            # Y (no tener fecha fin O tener fecha fin después del inicio de mes)
-            query = """
-            SELECT 
-                c.dni_perc as 'Identificación',
-                p.nombre_puesto as 'Nombre',    -- REQUERIMIENTO: Nombre = Puesto
-                c.salario as 'Salario Base',
-                COALESCE(gp.codigo, 'GEN') as 'Categoría de Empleado', -- Mapeo a Grupo PERC
-                '00' as 'Niveles Laborales',
-                0 as 'Bonificaciones',
-                0 as 'Beneficios Laborales',
-                '1' as 'Tipo de Contrato'
-            FROM contratos c
-            JOIN empleados e ON c.id_empleado = e.id_empleado
-            JOIN cat_puestos p ON c.id_puesto = p.id_puesto
-            LEFT JOIN cat_grupos_perc gp ON p.id_grupo_perc = gp.id_grupo
-            WHERE 
-                c.activo = 1
-                AND c.fecha_inicio <= ?
-                AND (c.fecha_fin IS NULL OR c.fecha_fin >= ?)
             """
-            
-            # Usamos pandas para leer SQL directamente
-            df = pd.read_sql_query(query, conn, params=(end_date_str, start_date_str))
-            
-            if df.empty:
-                return False, "No se encontraron contratos activos en el periodo seleccionado."
+            Genera el reporte Excel para PERC.
+            Ahora cruza información con la tabla 'nominas_mensuales' para obtener datos reales.
+            """
+            conn = self.db.get_connection()
+            if not conn:
+                return False, "No hay conexión a base de datos."
 
-            # 3. Post-Procesamiento (Opcional)
-            # Asegurar que 'Identificación' sea string para conservar ceros a la izquierda si los hubiera
-            df['Identificación'] = df['Identificación'].astype(str)
-            df['Categoría de Empleado'] = df['Categoría de Empleado'].astype(str).str.zfill(5)
+            try:
+                # 1. Definir rango de fechas para validar contratos activos
+                start_date_str = f"{year}-{int(month):02d}-01"
+                last_day = calendar.monthrange(int(year), int(month))[1]
+                end_date_str = f"{year}-{int(month):02d}-{last_day}"
 
-
-            # 4. Exportar a Excel
-            # Usamos context manager para guardar
-            with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Empleado')
+                # 2. Query SQL Enriquecido
+                # Lógica: Trae todos los contratos activos. 
+                # Si hay nómina cargada para este mes, usa esos montos.
+                # Si no hay nómina, usa el salario del contrato y 0 en variables.
+                query = """
+                SELECT 
+                    c.dni_perc as 'Identificación',
+                    p.nombre_puesto as 'Nombre',
+                    
+                    -- PRIORIDAD: Salario de Nómina > Salario Contrato
+                    COALESCE(nm.salario_base, c.salario) as 'Salario Base',
+                    
+                    COALESCE(gp.codigo, 'GEN') as 'Categoría de Empleado',
+                    '00' as 'Niveles Laborales',
+                    
+                    -- PRIORIDAD: Dato de Nómina > 0
+                    COALESCE(nm.bonificaciones, 0) as 'Bonificaciones',
+                    COALESCE(nm.beneficios_laborales, 0) as 'Beneficios Laborales',
+                    
+                    '1' as 'Tipo de Contrato'
+                FROM contratos c
+                JOIN empleados e ON c.id_empleado = e.id_empleado
+                JOIN cat_puestos p ON c.id_puesto = p.id_puesto
+                LEFT JOIN cat_grupos_perc gp ON p.id_grupo_perc = gp.id_grupo
                 
-                # Auto-ajustar ancho de columnas (Opcional, estética)
-                worksheet = writer.sheets['Empleado']
-                for column_cells in worksheet.columns:
-                    length = max(len(str(cell.value)) for cell in column_cells)
-                    worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
+                -- JOIN con la tabla de nóminas ESPECÍFICA para el año/mes solicitado
+                LEFT JOIN nominas_mensuales nm ON c.id_contrato = nm.id_contrato 
+                                            AND nm.anio = ? 
+                                            AND nm.mes = ?
+                WHERE 
+                    c.activo = 1
+                    AND c.fecha_inicio <= ?
+                    AND (c.fecha_fin IS NULL OR c.fecha_fin >= ?)
+                """
+                
+                # IMPORTANTE: El orden de los parámetros debe coincidir con los ? en el SQL
+                # 1 y 2: Para el LEFT JOIN (nm.anio, nm.mes)
+                # 3 y 4: Para el WHERE de fechas (end_date, start_date)
+                params = (year, int(month), end_date_str, start_date_str)
+                
+                # Usamos pandas para leer SQL directamente
+                df = pd.read_sql_query(query, conn, params=params)
+                
+                if df.empty:
+                    return False, "No se encontraron contratos activos en el periodo seleccionado."
 
-            return True, f"Reporte generado exitosamente en:\n{filepath}"
+                # 3. Post-Procesamiento
+                df['Identificación'] = df['Identificación'].astype(str)
+                df['Categoría de Empleado'] = df['Categoría de Empleado'].astype(str).str.zfill(5)
 
-        except Exception as e:
-            return False, f"Error generando reporte: {str(e)}"
-        finally:
-            conn.close()
+                # 4. Exportar a Excel
+                with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Empleado')
+                    
+                    # Auto-ajustar ancho columnas
+                    worksheet = writer.sheets['Empleado']
+                    for column_cells in worksheet.columns:
+                        length = max(len(str(cell.value)) for cell in column_cells)
+                        worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
+
+                return True, f"Reporte generado exitosamente en:\n{filepath}"
+
+            except Exception as e:
+                return False, f"Error generando reporte: {str(e)}"
+            finally:
+                conn.close()
     
 
     def generate_programacion_horas_perc_excel(self, year, month, filepath, input_path, dias_feriado=0, cant_horas_diarias=8):
