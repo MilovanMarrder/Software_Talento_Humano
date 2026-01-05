@@ -5,6 +5,7 @@ import sqlite3
 import re
 import numpy as np
 from config import settings
+from datetime import datetime
 
 class PercExportService:
     def __init__(self):
@@ -81,140 +82,140 @@ class PercExportService:
 
 
 
-    def generate_programacion_horas_perc_excel(self, year, month, filepath, input_path, dias_feriado=0, cant_horas_diarias_default=8):
+# En logics/perc_export_service.py
+
+    def generate_programacion_horas_perc_excel(self, year, month, filepath, input_path, cant_horas_diarias_default=8):
         """
-        Procesa el archivo de programación calculando horas según la JORNADA del contrato.
+        Procesa el reporte considerando Jornada Específica y Días Feriados de BD.
+        Nota: Eliminamos el parámetro 'dias_feriado' manual.
         """
         try:
-            # 1. Importar el archivo cargado por el usuario
+            # 1. Cargar Excel Input
             df = pd.read_excel(input_path)
-
-            if 'Empleado' not in df.columns:
-                return False, "El archivo cargado NO es una plantilla de PERC"
-            
-            # Extraer DNI PERC del string 'Nombre__DNI'
-            # Ajusta el split según tu formato real. Asumo "Nombre__DNI"
+            if 'Empleado' not in df.columns: return False, "Falta columna 'Empleado'"
             df['dni_perc'] = df['Empleado'].str.split('__').str[1].str.strip()
 
-            # ------------------------------------------------------------------
-            # PASO 2: Calcular Días Laborables del Mes (Escalar)
-            # ------------------------------------------------------------------
-            def obtener_dias_laborables(anio, mes, feriados):
-                num_dias = calendar.monthrange(int(anio), int(mes))[1]
-                dias_lab = 0
-                for dia in range(1, num_dias + 1):
-                    # 0=Lunes ... 4=Viernes. Asumimos semana inglesa estándar por ahora.
-                    if calendar.weekday(int(anio), int(mes), dia) < 5: 
-                        dias_lab += 1
-                
-                # Evitar negativos si feriados > dias reales
-                return max(0, dias_lab - int(feriados))
-
-            dias_laborables = obtener_dias_laborables(year, month, dias_feriado)
-
-            # ------------------------------------------------------------------
-            # PASO 3: Obtener Jornada Específica por Contrato desde BD
-            # ------------------------------------------------------------------
             conn = self.db.get_connection()
             
-            # Query: Trae dni_perc y las horas de su jornada asociada
-            # Solo contratos activos o vigentes en el periodo (simplificado a activos hoy)
+            # ------------------------------------------------------------------
+            # A. LÓGICA DE DÍAS FESTIVOS (Dinámica)
+            # ------------------------------------------------------------------
+            # Construimos fechas límite del mes
+            start_date = f"{year}-{int(month):02d}-01"
+            last_day = calendar.monthrange(int(year), int(month))[1]
+            end_date = f"{year}-{int(month):02d}-{last_day}"
+
+            # Traer feriados que caen en este mes
+            query_feriados = """
+                SELECT fecha FROM dias_festivos 
+                WHERE fecha BETWEEN ? AND ?
+            """
+            feriados_df = pd.read_sql_query(query_feriados, conn, params=(start_date, end_date))
+            
+            # Contar cuántos feriados caen en LUNES-VIERNES (0-4)
+            # Si un feriado cae Sábado(5) o Domingo(6), NO lo descontamos de la base 
+            # porque la base ya excluye fines de semana.
+            count_feriados_laborables = 0
+            for fecha_str in feriados_df['fecha']:
+                date_obj = datetime.strptime(fecha_str, '%Y-%m-%d')
+                if date_obj.weekday() < 5: # Es día de semana
+                    count_feriados_laborables += 1
+            
+            # ------------------------------------------------------------------
+            # B. CALCULAR DÍAS BASE DEL MES (Sin feriados aún)
+            # ------------------------------------------------------------------
+            def get_base_workdays(anio, mes):
+                num_dias = calendar.monthrange(int(anio), int(mes))[1]
+                dias = 0
+                for d in range(1, num_dias+1):
+                    if calendar.weekday(int(anio), int(mes), d) < 5: dias += 1
+                return dias
+
+            dias_laborables_base = get_base_workdays(year, month)
+
+            # ------------------------------------------------------------------
+            # C. OBTENER INFO DE CONTRATOS + REGLA JORNADA
+            # ------------------------------------------------------------------
             query_jornadas = """
             SELECT 
                 c.dni_perc,
-                COALESCE(j.horas_diarias, 8) as horas_db
+                COALESCE(j.horas_diarias, 8) as horas_diarias,
+                COALESCE(j.aplica_feriados, 1) as aplica_feriados -- Traemos el flag
             FROM contratos c
             LEFT JOIN cat_jornadas j ON c.id_jornada = j.id_jornada
             WHERE c.activo = 1
             """
-            df_jornadas = pd.read_sql_query(query_jornadas, conn)
+            df_contract_info = pd.read_sql_query(query_jornadas, conn)
             
-            # Query: Distribución de costos (Tu lógica original)
+            # Query Distribución (Igual que antes)
             query_dist = """
             SELECT 
                 up.codigo_up || '-' || up.nombre_up AS unidad_produccion,
                 c.dni_perc,
                 COALESCE(dc.porcentaje, 0) AS porcentaje
-            FROM cat_unidades_produccion AS up
-            LEFT JOIN distribucion_costos AS dc ON up.id_unidad = dc.id_unidad
-            LEFT JOIN contratos AS c ON dc.id_contrato = c.id_contrato
-            WHERE c.activo = 1;
+            FROM distribucion_costos dc
+            JOIN cat_unidades_produccion up ON dc.id_unidad = up.id_unidad
+            JOIN contratos c ON dc.id_contrato = c.id_contrato
+            WHERE c.activo = 1
             """
-            dist_up = pd.read_sql_query(query_dist, conn)
-            
+            df_dist = pd.read_sql_query(query_dist, conn)
             conn.close()
 
             # ------------------------------------------------------------------
-            # PASO 4: Cruce y Cálculo Vectorizado
+            # D. CÁLCULO VECTORIZADO (Matemática con Pandas)
             # ------------------------------------------------------------------
+            # Merge
+            df_merged = pd.merge(df, df_contract_info, on='dni_perc', how='left')
             
-            # A. Unir Excel con Jornadas de BD
-            # Usamos left join para mantener todos los del Excel. 
-            # Si no hay match en BD, 'horas_db' será NaN.
-            df_merged = pd.merge(df, df_jornadas, on='dni_perc', how='left')
+            # Defaults para no encontrados
+            df_merged['horas_diarias'] = df_merged['horas_diarias'].fillna(cant_horas_diarias_default)
+            df_merged['aplica_feriados'] = df_merged['aplica_feriados'].fillna(1) # Default: Sí aplica
+
+            # LÓGICA CONDICIONAL:
+            # Si aplica_feriados == 1 -> Días = (Base - FeriadosCount)
+            # Si aplica_feriados == 0 -> Días = Base
             
-            # B. Rellenar nulos con el default (ej: 8 horas) si no se encontró contrato
-            df_merged['horas_db'] = df_merged['horas_db'].fillna(cant_horas_diarias_default)
+            # Creamos columna de días efectivos por persona
+            df_merged['dias_a_trabajar'] = dias_laborables_base # Inicializamos con base
             
-            # C. CALCULO REAL: Días Laborables * Horas de SU jornada
-            df_merged['horas_programadas_total'] = dias_laborables * df_merged['horas_db']
+            # Restamos feriados SOLO donde aplica_feriados es 1 (True)
+            # Usamos .loc para afectar solo a esas filas
+            df_merged.loc[df_merged['aplica_feriados'] == 1, 'dias_a_trabajar'] -= count_feriados_laborables
+            
+            # Cálculo Horas
+            df_merged['horas_programadas_total'] = df_merged['dias_a_trabajar'] * df_merged['horas_diarias']
 
             # ------------------------------------------------------------------
-            # PASO 5: Distribución por Unidad de Producción (Pivot)
+            # E. PIVOT Y EXPORT (Igual que versión anterior)
             # ------------------------------------------------------------------
-            
-            # Seleccionamos columnas base
-            # Asegúrate que 'Total Empleados', 'Total Pagado' existan en tu Excel original
-            # Si no, ajusta esta lista.
-            cols_base = ['Empleado', 'Total Empleados', 'Total Pagado', 'Componente Salarial', 'dni_perc', 'horas_programadas_total']
-            
-            # Filtramos solo columnas que existan para evitar KeyError
-            cols_reales = [c for c in cols_base if c in df_merged.columns]
-            base_calc = df_merged[cols_reales].copy()
-
-            # Unir con Distribución de Costos
-            # Nota: Un contrato puede tener VARIAS unidades, por eso aumenta filas
-            base_final = pd.merge(base_calc, dist_up, on='dni_perc', how='left')
-
-            # Si no tiene distribución, asumimos 100% a una unidad "SIN ASIGNAR" o similar,
-            # o si tu logica lo permite, eliminamos. Aquí asumo limpieza básica:
-            base_final['porcentaje'] = base_final['porcentaje'].fillna(100) # O 0, según tu regla
+            base_final = pd.merge(df_merged, df_dist, on='dni_perc', how='left')
+            base_final['porcentaje'] = base_final['porcentaje'].fillna(100)
             base_final['unidad_produccion'] = base_final['unidad_produccion'].fillna("SIN_DISTRIBUCION")
-
-            # Cálculo final ponderado
+            
             base_final['horas_ponderadas'] = base_final['horas_programadas_total'] * (base_final['porcentaje'] / 100.0)
 
-            # Limpieza para Pivot
             pivot_index = ['Empleado', 'Total Empleados', 'Total Pagado', 'Componente Salarial']
-            # Asegurar que existan en el DF final
             pivot_index = [c for c in pivot_index if c in base_final.columns]
 
             df_pivot = base_final.pivot_table(
                 index=pivot_index,
                 columns='unidad_produccion',
                 values='horas_ponderadas',
-                aggfunc='sum', # Sumar por si hay duplicados raros
+                aggfunc='sum',
                 fill_value=0
             ).reset_index()
 
-            # ------------------------------------------------------------------
-            # PASO 6: Exportar
-            # ------------------------------------------------------------------
             with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
                 df_pivot.to_excel(writer, index=False, sheet_name='Programación Hora')
-                
-                # Ajuste cosmético de columnas
                 worksheet = writer.sheets['Programación Hora']
                 for column_cells in worksheet.columns:
                     length = max(len(str(cell.value)) for cell in column_cells)
                     worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
 
-            return True, f"Reporte generado con jornadas específicas.\nGuardado en: {filepath}"
+            return True, f"Reporte generado. Feriados descontados: {count_feriados_laborables}\nGuardado en: {filepath}"
 
         except Exception as e:
-            import traceback
-            traceback.print_exc() # Para ver error detallado en consola
-            return False, f"Error en procesamiento: {str(e)}"
+            return False, f"Error: {str(e)}"
         
 
     def export_database_to_excel(self, output_path):

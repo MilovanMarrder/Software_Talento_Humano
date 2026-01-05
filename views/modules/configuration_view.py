@@ -78,10 +78,27 @@ class ConfigurationView(ttk.Frame):
 
         # JORNADAS LABORALES
         self.notebook.add(CatalogTab(
-            self.notebook, "Jornadas Laborales", ("ID", "Descripción", "Horas Diarias"),
+            self.notebook, "Jornadas Laborales", 
+            # Columnas Visuales
+            ("ID", "Descripción", "Horas Diarias", "Descansa Feriados"),
             self.dao.get_jornadas, self.dao.crud_jornada,
-            fields=[("Nombre (ej: Turno A):", "text"), ("Horas (ej: 8.0):", "text")]
+            fields=[
+                ("Nombre (ej: Turno A):", "text"), 
+                ("Horas (ej: 8.0):", "text"),
+                ("¿Aplica Feriados?:", "checkbox") # Nuevo campo
+            ]
         ), text="Jornadas")
+
+        # DÍAS FESTIVOS
+        self.notebook.add(CatalogTab(
+            self.notebook, "Días Feriados", 
+            ("ID", "Fecha (YYYY-MM-DD)", "Descripción"),
+            self.dao.get_dias_festivos, self.dao.crud_dias_festivos,
+            fields=[
+                ("Fecha (YYYY-MM-DD):", "text"), 
+                ("Descripción:", "text")
+            ]
+        ), text="Calendario Feriados")
 
     def _init_attendance_tabs(self):
             """ Inicializa las pestañas relacionadas a RRHH / Asistencia """

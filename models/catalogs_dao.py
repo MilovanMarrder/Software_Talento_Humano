@@ -287,24 +287,68 @@ class CatalogsDAO:
         finally:
             conn.close()
 
-    # --- CRUD JORNADAS ---
-    def get_jornadas(self):
-        return self._get_all("cat_jornadas", "id_jornada", "nombre")
 
-    def crud_jornada(self, action, id_item=None, nombre=None, horas=8.0):
+
+    # --- NUEVO: CRUD DÍAS FESTIVOS ---
+    def get_dias_festivos(self):
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        # Ordenamos por fecha descendente para ver los próximos o recientes
+        cursor.execute("SELECT id_feriado, fecha, descripcion FROM dias_festivos ORDER BY fecha DESC")
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+
+    def crud_dias_festivos(self, action, id_item=None, fecha=None, descripcion=None):
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
             if action == 'INSERT':
-                cursor.execute("INSERT INTO cat_jornadas (nombre, horas_diarias) VALUES (?, ?)", (nombre, horas))
+                cursor.execute("INSERT INTO dias_festivos (fecha, descripcion) VALUES (?, ?)", (fecha, descripcion))
             elif action == 'UPDATE':
-                cursor.execute("UPDATE cat_jornadas SET nombre=?, horas_diarias=? WHERE id_jornada=?", (nombre, horas, id_item))
+                cursor.execute("UPDATE dias_festivos SET fecha=?, descripcion=? WHERE id_feriado=?", (fecha, descripcion, id_item))
+            elif action == 'DELETE':
+                cursor.execute("DELETE FROM dias_festivos WHERE id_feriado=?", (id_item,))
+            conn.commit()
+            return True, "Operación exitosa"
+        except sqlite3.IntegrityError:
+            return False, "Error: Ya existe un feriado en esa fecha."
+        except Exception as e:
+            return False, str(e)
+        finally:
+            conn.close()
+
+    # --- MODIFICADO: CRUD JORNADAS (Agregar campo aplica_feriados) ---
+    def get_jornadas(self):
+        # Ahora retornamos 4 columnas
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id_jornada, nombre, horas_diarias, 
+            CASE WHEN aplica_feriados = 1 THEN 'Sí' ELSE 'No' END as visual_aplica,
+            aplica_feriados -- Raw data
+            FROM cat_jornadas ORDER BY nombre
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+
+    def crud_jornada(self, action, id_item=None, nombre=None, horas=8.0, aplica_feriados=1):
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            aplica_feriados = 1 if aplica_feriados else 0 # Asegurar int
+
+            if action == 'INSERT':
+                cursor.execute("INSERT INTO cat_jornadas (nombre, horas_diarias, aplica_feriados) VALUES (?, ?, ?)", 
+                               (nombre, horas, aplica_feriados))
+            elif action == 'UPDATE':
+                cursor.execute("UPDATE cat_jornadas SET nombre=?, horas_diarias=?, aplica_feriados=? WHERE id_jornada=?", 
+                               (nombre, horas, aplica_feriados, id_item))
             elif action == 'DELETE':
                 cursor.execute("DELETE FROM cat_jornadas WHERE id_jornada=?", (id_item,))
             conn.commit()
             return True, "Operación exitosa"
-        except sqlite3.IntegrityError:
-            return False, "No se puede eliminar: Jornada asignada a contratos."
         except Exception as e:
             return False, str(e)
         finally:
