@@ -124,53 +124,71 @@ class ContractDAO:
             print(f"DEBUG: Error al crear contrato: {e}")
             return False, f"No se pudo crear el contrato: {e}"
 
-    # --- UPDATE ACTUALIZADO ---
     def update_contract(self, id_contrato, data_contrato, lista_costos):
-        conn = self.db.get_connection()
-        try:
-            cursor = conn.cursor()
+            conn = self.db.get_connection()
+            operation_success = False
+            error_msg = ""
             
-            # Data recibida desde la vista (Nota: NO trae id_empleado, hay que buscarlo)
-            (id_puesto, id_depto, id_tipo, id_jornada, 
-             f_kardex, s_inicial, 
-             f_ini, f_fin, salario, _id_con_param) = data_contrato
-            
-            # 1. RECUPERAR ID_EMPLEADO (Para recalcular dni_perc si cambió el tipo)
-            cursor.execute("SELECT id_empleado FROM contratos WHERE id_contrato = ?", (id_contrato,))
-            row_emp = cursor.fetchone()
-            if not row_emp: raise Exception("Contrato no encontrado")
-            id_emp = row_emp[0]
+            try:
+                cursor = conn.cursor()
+                
+                # Data recibida desde la vista
+                (id_puesto, id_depto, id_tipo, id_jornada, 
+                f_kardex, s_inicial, 
+                f_ini, f_fin, salario, _id_con_param) = data_contrato
+                
+                # 1. RECUPERAR ID_EMPLEADO
+                cursor.execute("SELECT id_empleado FROM contratos WHERE id_contrato = ?", (id_contrato,))
+                row_emp = cursor.fetchone()
+                if not row_emp: raise Exception("Contrato no encontrado")
+                id_emp = row_emp[0]
 
-            # 2. RECALCULAR DNI PERC
-            dni_perc = self._calculate_dni_perc(cursor, id_emp, id_tipo)
+                # 2. RECALCULAR DNI PERC
+                dni_perc = self._calculate_dni_perc(cursor, id_emp, id_tipo)
 
-            query = """
-                UPDATE contratos 
-                SET id_puesto=?, id_departamento=?, id_tipo_contrato=?, id_jornada=?,
-                    fecha_inicio_kardex=?, saldo_inicial_vacaciones=?,
-                    fecha_inicio=?, fecha_fin=?, salario=?,
-                    dni_perc=?   -- <-- Actualizamos esto
-                WHERE id_contrato=?
-            """
-            cursor.execute(query, (id_puesto, id_depto, id_tipo, id_jornada, f_kardex, s_inicial, 
-                                   f_ini, f_fin, salario, dni_perc, id_contrato))
-            
-            # Costos...
-            cursor.execute("DELETE FROM distribucion_costos WHERE id_contrato=?", (id_contrato,))
-            for uid, pct in lista_costos:
-                cursor.execute("INSERT INTO distribucion_costos (id_contrato, id_unidad, porcentaje) VALUES (?, ?, ?)", (id_contrato, uid, pct))
+                query = """
+                    UPDATE contratos 
+                    SET id_puesto=?, id_departamento=?, id_tipo_contrato=?, id_jornada=?,
+                        fecha_inicio_kardex=?, saldo_inicial_vacaciones=?,
+                        fecha_inicio=?, fecha_fin=?, salario=?,
+                        dni_perc=?
+                    WHERE id_contrato=?
+                """
+                cursor.execute(query, (id_puesto, id_depto, id_tipo, id_jornada, f_kardex, s_inicial, 
+                                    f_ini, f_fin, salario, dni_perc, id_contrato))
+                
+                # Costos...
+                cursor.execute("DELETE FROM distribucion_costos WHERE id_contrato=?", (id_contrato,))
+                for uid, pct in lista_costos:
+                    cursor.execute("INSERT INTO distribucion_costos (id_contrato, id_unidad, porcentaje) VALUES (?, ?, ?)", (id_contrato, uid, pct))
 
-            # Sincronizar Kardex
-            if f_kardex:
-                self._sync_initial_balance_kardex(cursor, id_contrato, f_kardex, s_inicial)
+                # Sincronizar Kardex (Saldo Inicial)
+                if f_kardex:
+                    self._sync_initial_balance_kardex(cursor, id_contrato, f_kardex, s_inicial)
 
-            conn.commit()
-            return True, "Actualizado."
-        except Exception as e:
-            conn.rollback()
-            return False, str(e)
-        finally:
-            conn.close()
+                conn.commit()
+                operation_success = True # Marcamos bandera de éxito
+                
+            except Exception as e:
+                conn.rollback()
+                operation_success = False
+                error_msg = str(e)
+            finally:
+                conn.close() # ¡CERRAMOS LA CONEXIÓN A (IMPORTANTE)!
+
+            # --- LÓGICA POST-CIERRE (FUERA DEL BLOQUE DE CONEXIÓN A) ---
+            if operation_success:
+                try:
+                    # Disparamos el recálculo inmediato de los meses pendientes
+                    vac_service = VacationService()
+                    vac_service.process_monthly_accruals(id_contrato)
+                    return True, "Contrato actualizado y acumulaciones recalculadas."
+                except Exception as e_acc:
+                    # Si falla el cálculo, al menos avisamos, pero el contrato ya se guardó
+                    print(f"Advertencia: Contrato guardado pero falló recálculo: {e_acc}")
+                    return True, "Contrato actualizado (Advertencia: Revise Kardex)."
+            else:
+                return False, error_msg
 
 
 
