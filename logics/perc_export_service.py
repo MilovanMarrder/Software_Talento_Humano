@@ -79,71 +79,143 @@ class PercExportService:
             conn.close()
     
 
-    def generate_programacion_horas_perc_excel(self, year, month, filepath, input_path, dias_feriado=0, cant_horas_diarias=8):
+
+
+    def generate_programacion_horas_perc_excel(self, year, month, filepath, input_path, dias_feriado=0, cant_horas_diarias_default=8):
         """
-        Procesa el archivo de programación de horas.
+        Procesa el archivo de programación calculando horas según la JORNADA del contrato.
         """
         try:
             # 1. Importar el archivo cargado por el usuario
             df = pd.read_excel(input_path)
 
             if 'Empleado' not in df.columns:
-                return False, "El archivo cargado no tiene la columna 'Empleado'"
+                return False, "El archivo cargado NO es una plantilla de PERC"
             
-            df['dni_perc'] = df['Empleado'].str.split('__').str[1]
+            # Extraer DNI PERC del string 'Nombre__DNI'
+            # Ajusta el split según tu formato real. Asumo "Nombre__DNI"
+            df['dni_perc'] = df['Empleado'].str.split('__').str[1].str.strip()
 
-            # --- Función interna de cálculo ---
-            def obtener_horas_programadas(anio, mes, feriados, horas_dia):
+            # ------------------------------------------------------------------
+            # PASO 2: Calcular Días Laborables del Mes (Escalar)
+            # ------------------------------------------------------------------
+            def obtener_dias_laborables(anio, mes, feriados):
                 num_dias = calendar.monthrange(int(anio), int(mes))[1]
-                dias_laborales = 0
+                dias_lab = 0
                 for dia in range(1, num_dias + 1):
-                    if calendar.weekday(int(anio), int(mes), dia) < 5: # Lunes a Viernes
-                        dias_laborales += 1
-                return (dias_laborales - int(feriados)) * int(horas_dia)
+                    # 0=Lunes ... 4=Viernes. Asumimos semana inglesa estándar por ahora.
+                    if calendar.weekday(int(anio), int(mes), dia) < 5: 
+                        dias_lab += 1
+                
+                # Evitar negativos si feriados > dias reales
+                return max(0, dias_lab - int(feriados))
 
-            horas_totales = obtener_horas_programadas(year, month, dias_feriado, cant_horas_diarias)
-            df['horas_programadas'] = horas_totales
-            
-            df_base_perc = df[['Empleado','Total Empleados', 'Total Pagado', 'Componente Salarial','dni_perc','horas_programadas']].copy()
+            dias_laborables = obtener_dias_laborables(year, month, dias_feriado)
 
-            # 2. Traer distribución desde DB
+            # ------------------------------------------------------------------
+            # PASO 3: Obtener Jornada Específica por Contrato desde BD
+            # ------------------------------------------------------------------
             conn = self.db.get_connection()
-            query = """
+            
+            # Query: Trae dni_perc y las horas de su jornada asociada
+            # Solo contratos activos o vigentes en el periodo (simplificado a activos hoy)
+            query_jornadas = """
+            SELECT 
+                c.dni_perc,
+                COALESCE(j.horas_diarias, 8) as horas_db
+            FROM contratos c
+            LEFT JOIN cat_jornadas j ON c.id_jornada = j.id_jornada
+            WHERE c.activo = 1
+            """
+            df_jornadas = pd.read_sql_query(query_jornadas, conn)
+            
+            # Query: Distribución de costos (Tu lógica original)
+            query_dist = """
             SELECT 
                 up.codigo_up || '-' || up.nombre_up AS unidad_produccion,
                 c.dni_perc,
                 COALESCE(dc.porcentaje, 0) AS porcentaje
             FROM cat_unidades_produccion AS up
             LEFT JOIN distribucion_costos AS dc ON up.id_unidad = dc.id_unidad
-            LEFT JOIN contratos AS c ON dc.id_contrato = c.id_contrato;
+            LEFT JOIN contratos AS c ON dc.id_contrato = c.id_contrato
+            WHERE c.activo = 1;
             """
-            dist_up = pd.read_sql_query(query, conn)
+            dist_up = pd.read_sql_query(query_dist, conn)
+            
             conn.close()
 
-            # 3. Procesamiento y Pivot
-            base = pd.merge(df_base_perc, dist_up, on='dni_perc', how='right')
-            base['horas'] = base['horas_programadas'] * (base['porcentaje'] / 100)
-            base = base[['Empleado', 'Total Empleados', 'Total Pagado', 'Componente Salarial','unidad_produccion','horas']].fillna({'horas':0})
+            # ------------------------------------------------------------------
+            # PASO 4: Cruce y Cálculo Vectorizado
+            # ------------------------------------------------------------------
             
-            df_pivot = base.pivot(
-                index=['Empleado', 'Total Empleados', 'Total Pagado', 'Componente Salarial'],
+            # A. Unir Excel con Jornadas de BD
+            # Usamos left join para mantener todos los del Excel. 
+            # Si no hay match en BD, 'horas_db' será NaN.
+            df_merged = pd.merge(df, df_jornadas, on='dni_perc', how='left')
+            
+            # B. Rellenar nulos con el default (ej: 8 horas) si no se encontró contrato
+            df_merged['horas_db'] = df_merged['horas_db'].fillna(cant_horas_diarias_default)
+            
+            # C. CALCULO REAL: Días Laborables * Horas de SU jornada
+            df_merged['horas_programadas_total'] = dias_laborables * df_merged['horas_db']
+
+            # ------------------------------------------------------------------
+            # PASO 5: Distribución por Unidad de Producción (Pivot)
+            # ------------------------------------------------------------------
+            
+            # Seleccionamos columnas base
+            # Asegúrate que 'Total Empleados', 'Total Pagado' existan en tu Excel original
+            # Si no, ajusta esta lista.
+            cols_base = ['Empleado', 'Total Empleados', 'Total Pagado', 'Componente Salarial', 'dni_perc', 'horas_programadas_total']
+            
+            # Filtramos solo columnas que existan para evitar KeyError
+            cols_reales = [c for c in cols_base if c in df_merged.columns]
+            base_calc = df_merged[cols_reales].copy()
+
+            # Unir con Distribución de Costos
+            # Nota: Un contrato puede tener VARIAS unidades, por eso aumenta filas
+            base_final = pd.merge(base_calc, dist_up, on='dni_perc', how='left')
+
+            # Si no tiene distribución, asumimos 100% a una unidad "SIN ASIGNAR" o similar,
+            # o si tu logica lo permite, eliminamos. Aquí asumo limpieza básica:
+            base_final['porcentaje'] = base_final['porcentaje'].fillna(100) # O 0, según tu regla
+            base_final['unidad_produccion'] = base_final['unidad_produccion'].fillna("SIN_DISTRIBUCION")
+
+            # Cálculo final ponderado
+            base_final['horas_ponderadas'] = base_final['horas_programadas_total'] * (base_final['porcentaje'] / 100.0)
+
+            # Limpieza para Pivot
+            pivot_index = ['Empleado', 'Total Empleados', 'Total Pagado', 'Componente Salarial']
+            # Asegurar que existan en el DF final
+            pivot_index = [c for c in pivot_index if c in base_final.columns]
+
+            df_pivot = base_final.pivot_table(
+                index=pivot_index,
                 columns='unidad_produccion',
-                values='horas'
+                values='horas_ponderadas',
+                aggfunc='sum', # Sumar por si hay duplicados raros
+                fill_value=0
             ).reset_index()
 
-            # 4. Exportar
+            # ------------------------------------------------------------------
+            # PASO 6: Exportar
+            # ------------------------------------------------------------------
             with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
-                df_pivot[df_pivot['Empleado'].notna()].to_excel(writer, index=False, sheet_name='Programación Hora')
+                df_pivot.to_excel(writer, index=False, sheet_name='Programación Hora')
                 
+                # Ajuste cosmético de columnas
                 worksheet = writer.sheets['Programación Hora']
                 for column_cells in worksheet.columns:
                     length = max(len(str(cell.value)) for cell in column_cells)
                     worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
 
-            return True, f"Reporte procesado y guardado en:\n{filepath}"
+            return True, f"Reporte generado con jornadas específicas.\nGuardado en: {filepath}"
 
         except Exception as e:
+            import traceback
+            traceback.print_exc() # Para ver error detallado en consola
             return False, f"Error en procesamiento: {str(e)}"
+        
 
     def export_database_to_excel(self, output_path):
         """
