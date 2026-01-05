@@ -6,6 +6,7 @@ import re
 import numpy as np
 from config import settings
 from datetime import datetime
+from logics.time_balance_service import TimeBalanceService
 
 class PercExportService:
     def __init__(self):
@@ -84,149 +85,83 @@ class PercExportService:
 
     def generate_programacion_horas_perc_excel(self, year, month, filepath, input_path, cant_horas_diarias_default=8):
             """
-            Versión 3.0: Jornadas Específicas + Feriados + Resta de Inasistencias (Vac/Inc/Perm)
+            Versión 4.0 (BI Architecture): 
+            1. Ejecuta el cálculo y lo guarda en BD (TimeBalanceService).
+            2. Lee los resultados de la BD.
+            3. Cruza con el Excel de Salarios y Exporta.
             """
             try:
-                # 1. Cargar Excel Input
-                df = pd.read_excel(input_path)
-                if 'Empleado' not in df.columns: return False, "Falta columna 'Empleado'"
-                df['dni_perc'] = df['Empleado'].str.split('__').str[1].str.strip()
+                # ------------------------------------------------------------------
+                # PASO 1: PROCESAMIENTO Y GUARDADO (BI)
+                # ------------------------------------------------------------------
+                # Delegamos el cálculo pesado al nuevo servicio
+                balance_service = TimeBalanceService()
+                success_calc, msg_calc = balance_service.procesar_cierre_mensual(year, month)
+                
+                if not success_calc:
+                    return False, f"Fallo en el cálculo de horas: {msg_calc}"
 
+                # ------------------------------------------------------------------
+                # PASO 2: LECTURA DE DATOS YA PROCESADOS
+                # ------------------------------------------------------------------
                 conn = self.db.get_connection()
                 
-                # --- FECHAS LÍMITE DEL MES ---
-                start_date = f"{year}-{int(month):02d}-01"
-                last_day = calendar.monthrange(int(year), int(month))[1]
-                end_date = f"{year}-{int(month):02d}-{last_day}"
-
-                # ------------------------------------------------------------------
-                # A. CÁLCULO DE FERIADOS (Lo que ya hicimos)
-                # ------------------------------------------------------------------
-                query_feriados = "SELECT fecha FROM dias_festivos WHERE fecha BETWEEN ? AND ?"
-                feriados_df = pd.read_sql_query(query_feriados, conn, params=(start_date, end_date))
-                
-                count_feriados_laborables = 0
-                for fecha_str in feriados_df['fecha']:
-                    date_obj = datetime.strptime(fecha_str, '%Y-%m-%d')
-                    if date_obj.weekday() < 5: 
-                        count_feriados_laborables += 1
-                
-                # ------------------------------------------------------------------
-                # B. CÁLCULO DÍAS BASE
-                # ------------------------------------------------------------------
-                def get_base_workdays(anio, mes):
-                    num_dias = calendar.monthrange(int(anio), int(mes))[1]
-                    dias = 0
-                    for d in range(1, num_dias+1):
-                        if calendar.weekday(int(anio), int(mes), d) < 5: dias += 1
-                    return dias
-
-                dias_laborables_base = get_base_workdays(year, month)
-
-                # ------------------------------------------------------------------
-                # C. DATOS DE CONTRATO (JORNADA)
-                # ------------------------------------------------------------------
-                query_jornadas = """
-                SELECT 
-                    c.dni_perc,
-                    c.id_contrato, -- Necesario para cruzar inasistencias
-                    COALESCE(j.horas_diarias, 8) as horas_diarias,
-                    COALESCE(j.aplica_feriados, 1) as aplica_feriados
-                FROM contratos c
-                LEFT JOIN cat_jornadas j ON c.id_jornada = j.id_jornada
-                WHERE c.activo = 1
+                # Traemos el dato final (horas_programadas_netas) uniendo con contratos 
+                # para obtener el dni_perc que necesitamos para el Excel.
+                query_bi = """
+                    SELECT 
+                        c.dni_perc, 
+                        r.horas_programadas_netas
+                    FROM resumen_horas_mensuales r
+                    JOIN contratos c ON r.id_contrato = c.id_contrato
+                    WHERE r.anio = ? AND r.mes = ?
                 """
-                df_contract_info = pd.read_sql_query(query_jornadas, conn)
-
-                # ------------------------------------------------------------------
-                # D. NUEVO: CÁLCULO DE HORAS DE INASISTENCIA (CORREGIDO)
-                # ------------------------------------------------------------------
-                # Robustecemos la query:
-                # 1. LEFT JOIN a jornadas para no perder permisos si la jornada falla.
-                # 2. COALESCE para evitar nulos en las sumas.
+                df_db = pd.read_sql_query(query_bi, conn, params=(year, int(month)))
                 
-                query_inasistencias = """
-                SELECT 
-                    c.dni_perc,
-                    SUM(
-                        CASE 
-                            -- Si es por horas, tomamos el valor directo. Si es nulo, 0.
-                            WHEN i.es_por_horas = 1 THEN COALESCE(i.horas_totales, 0)
-                            
-                            -- Si es por días, multiplicamos. Si jornada es nula, asumimos 8h.
-                            ELSE (i.dias_descontar * COALESCE(j.horas_diarias, 8))
-                        END
-                    ) as horas_inasistencia_total
-                FROM inasistencias i
-                JOIN contratos c ON i.id_contrato = c.id_contrato
-                LEFT JOIN cat_jornadas j ON c.id_jornada = j.id_jornada
-                WHERE 
-                    i.fecha_inicio_real BETWEEN ? AND ?
-                GROUP BY c.dni_perc
-                """
-                
-                df_absences = pd.read_sql_query(query_inasistencias, conn, params=(start_date, end_date))
-
-                # --- DIAGNÓSTICO (Borrar luego de validar) ---
-                print("\n--- DEBUG INASISTENCIAS ENCONTRADAS ---")
-                if not df_absences.empty:
-                    print(df_absences.head(10))
-                else:
-                    print("⚠ No se encontraron inasistencias en este rango de fechas.")
-                print("---------------------------------------\n")
-
-                # Query Distribución Costos
+                # Traemos la distribución de costos
                 query_dist = """
-                SELECT 
-                    up.codigo_up || '-' || up.nombre_up AS unidad_produccion,
-                    c.dni_perc,
-                    COALESCE(dc.porcentaje, 0) AS porcentaje
-                FROM distribucion_costos dc
-                JOIN cat_unidades_produccion up ON dc.id_unidad = up.id_unidad
-                JOIN contratos c ON dc.id_contrato = c.id_contrato
-                WHERE c.activo = 1
+                    SELECT 
+                        up.codigo_up || '-' || up.nombre_up AS unidad_produccion,
+                        c.dni_perc,
+                        COALESCE(dc.porcentaje, 0) AS porcentaje
+                    FROM distribucion_costos dc
+                    JOIN cat_unidades_produccion up ON dc.id_unidad = up.id_unidad
+                    JOIN contratos c ON dc.id_contrato = c.id_contrato
+                    WHERE c.activo = 1
                 """
                 df_dist = pd.read_sql_query(query_dist, conn)
                 
                 conn.close()
 
                 # ------------------------------------------------------------------
-                # E. MERGE Y CÁLCULOS FINALES
+                # PASO 3: CRUCE CON EXCEL INPUT (SALARIOS)
                 # ------------------------------------------------------------------
+                df_input = pd.read_excel(input_path)
+                if 'Empleado' not in df_input.columns: 
+                    return False, "El Excel no tiene la columna 'Empleado'"
                 
-                # 1. Unir Excel con Contratos
-                df_merged = pd.merge(df, df_contract_info, on='dni_perc', how='left')
-                
-                # 2. Unir con Inasistencias
-                df_merged = pd.merge(df_merged, df_absences, on='dni_perc', how='left')
+                df_input['dni_perc'] = df_input['Empleado'].str.split('__').str[1].str.strip()
 
-                # Defaults
-                df_merged['horas_diarias'] = df_merged['horas_diarias'].fillna(cant_horas_diarias_default)
-                df_merged['aplica_feriados'] = df_merged['aplica_feriados'].fillna(1)
-                df_merged['horas_inasistencia_total'] = df_merged['horas_inasistencia_total'].fillna(0) # Importante: 0 si no faltó
-
-                # 3. Calcular Horas Programadas BRUTAS (Sin restar faltas aún)
-                df_merged['dias_teoricos'] = dias_laborables_base
-                df_merged.loc[df_merged['aplica_feriados'] == 1, 'dias_teoricos'] -= count_feriados_laborables
+                # Hacemos Merge: Excel Input + Datos Calculados de BD
+                df_merged = pd.merge(df_input, df_db, on='dni_perc', how='left')
                 
-                df_merged['horas_teoricas'] = df_merged['dias_teoricos'] * df_merged['horas_diarias']
-                
-                # 4. RESTA FINAL: Programadas - Inasistencias
-                df_merged['horas_programadas_netas'] = df_merged['horas_teoricas'] - df_merged['horas_inasistencia_total']
-                
-                # Validación: No permitir negativos (si por error metieron más vacaciones que días laborales)
-                df_merged['horas_programadas_netas'] = df_merged['horas_programadas_netas'].clip(lower=0)
+                # Si hay empleados nuevos en el Excel que no se procesaron en BD (raro, pero posible)
+                # rellenamos con 0 o con un cálculo default. Por seguridad BI, usamos 0.
+                df_merged['horas_programadas_netas'] = df_merged['horas_programadas_netas'].fillna(0)
 
                 # ------------------------------------------------------------------
-                # F. DISTRIBUCIÓN Y EXPORTACIÓN
+                # PASO 4: PONDERACIÓN Y PIVOT (Igual que siempre)
                 # ------------------------------------------------------------------
                 base_final = pd.merge(df_merged, df_dist, on='dni_perc', how='left')
+                
+                # Limpieza de nulos en distribución
                 base_final['porcentaje'] = base_final['porcentaje'].fillna(100)
                 base_final['unidad_produccion'] = base_final['unidad_produccion'].fillna("SIN_DISTRIBUCION")
                 
-                # Ponderación
+                # Cálculo Ponderado
                 base_final['horas_ponderadas'] = base_final['horas_programadas_netas'] * (base_final['porcentaje'] / 100.0)
 
+                # Columnas del Pivot
                 pivot_index = ['Empleado', 'Total Empleados', 'Total Pagado', 'Componente Salarial']
                 pivot_index = [c for c in pivot_index if c in base_final.columns]
 
@@ -238,6 +173,9 @@ class PercExportService:
                     fill_value=0
                 ).reset_index()
 
+                # ------------------------------------------------------------------
+                # PASO 5: EXPORTACIÓN FÍSICA
+                # ------------------------------------------------------------------
                 with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
                     df_pivot.to_excel(writer, index=False, sheet_name='Programación Hora')
                     worksheet = writer.sheets['Programación Hora']
@@ -245,15 +183,11 @@ class PercExportService:
                         length = max(len(str(cell.value)) for cell in column_cells)
                         worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
 
-                # Mensaje informativo
-                msg = (f"Reporte generado.\n"
-                    f"- Días Base: {dias_laborables_base}\n"
-                    f"- Feriados descontados: {count_feriados_laborables}\n"
-                    f"- Inasistencias procesadas: {len(df_absences)} empleados afectados.")
-                
-                return True, msg
+                # Retornamos mensaje compuesto
+                return True, f"Proceso Completado.\nBD Actualizada + Reporte Generado.\n{msg_calc}"
 
             except Exception as e:
+                # import traceback; traceback.print_exc() # Descomentar para debug en consola
                 return False, f"Error: {str(e)}"
             
     def export_database_to_excel(self, output_path):
