@@ -1,5 +1,6 @@
 from config.db_connection import DatabaseConnection
 from logics.time_calculator import TimeCalculator
+from datetime import datetime, timedelta 
 
 class AttendanceDAO:
     def __init__(self):
@@ -123,19 +124,41 @@ class AttendanceDAO:
             else:
                 dias_finales = dias_calculados
 
-            # 3. HORAS
-            horas_totales = dias_finales * horas_jornada if es_horas else 0
+            # ---------------------------------------------------------------
+            # 3. CÁLCULO DE HORAS (CORREGIDO)
+            # ---------------------------------------------------------------
+            # Aquí estaba el error. No dependemos de dias_finales para las horas.
+            # Calculamos la diferencia real entre h_ini y h_fin.
+            
+            if es_horas:
+                # Formato esperado HH:MM
+                t_ini = datetime.strptime(h_ini, '%H:%M')
+                t_fin = datetime.strptime(h_fin, '%H:%M')
+                
+                # Manejo de turno nocturno (ej: 23:00 a 01:00)
+                if t_fin < t_ini:
+                    t_fin += timedelta(days=1)
+                
+                delta = t_fin - t_ini
+                # Convertimos segundos a horas decimales
+                horas_totales = delta.total_seconds() / 3600.0
+            else:
+                # Si es por días completos, entonces sí usamos la multiplicación
+                horas_totales = dias_finales * horas_jornada
 
-            # 4. INSERTAR
+            # 4. INSERTAR 
             query_main = """
                 INSERT INTO inasistencias 
                 (id_contrato, id_tipo, fecha_inicio_real, fecha_fin_real, 
-                horas_totales, dias_descontar, comentario)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                horas_totales, dias_descontar, comentario, es_por_horas) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """
+            # IMPORTANTE: Asegúrate de guardar el flag es_por_horas (1 o 0)
+            flag_horas = 1 if es_horas else 0
+            
             cursor.execute(query_main, (
                 id_con, id_tipo, f_ini, f_fin, 
-                horas_totales, dias_finales, detalle
+                horas_totales, dias_finales, detalle, flag_horas
             ))
             id_inasistencia = cursor.lastrowid
             
