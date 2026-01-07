@@ -2,6 +2,12 @@ import ttkbootstrap as ttk
 from config.db_connection import DatabaseConnection
 from views.main_window import MainWindow
 from config import settings 
+import sys
+
+# Si es un ejecutable y NO tiene consola (noconsole), redirige los errores a un archivo
+if getattr(sys, 'frozen', False) and not sys.stdout:
+    sys.stdout = open('log_output.txt', 'w', encoding='utf-8')
+    sys.stderr = sys.stdout
 
 class App(ttk.Window):
     def __init__(self):

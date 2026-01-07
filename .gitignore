@@ -1,2 +1,10 @@
 /archivos de construccion
 /venv
+/__pycache__/
+*.pyc
+/dist/
+/build/
+*.egg-info
+/.pytest_cache/
+/.mypy_cache/
+/.vscode/
