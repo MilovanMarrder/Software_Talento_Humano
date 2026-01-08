@@ -3,6 +3,7 @@ from config.db_connection import DatabaseConnection
 from views.main_window import MainWindow
 from config import settings 
 import sys
+from models.contract_dao import ContractDAO
 
 # Si es un ejecutable y NO tiene consola (noconsole), redirige los errores a un archivo
 if getattr(sys, 'frozen', False) and not sys.stdout:
@@ -33,6 +34,15 @@ class App(ttk.Window):
         if not self.db.test_connection():
             print("⚠ ADVERTENCIA: No se pudo conectar a la base de datos.")
             # Aquí podrías lanzar un popup de error antes de cerrar
+
+                # -----------------------------------------------------------
+        # 2. MANTENIMIENTO AUTOMÁTICO AL INICIO (NUEVO)
+        # -----------------------------------------------------------
+        try:
+            dao = ContractDAO()
+            dao.check_expired_contracts()
+        except Exception as e:
+            print(f"Advertencia: No se pudo verificar contratos vencidos: {e}")
         
         # 2. Inicializar Vista Principal
         # Pasamos 'self' como controller temporalmente

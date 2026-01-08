@@ -1,6 +1,7 @@
 import sqlite3
 from config.db_connection import DatabaseConnection
 from logics.vacation_service import VacationService
+from datetime import datetime
 
 class ContractDAO:
     def __init__(self):
@@ -72,6 +73,46 @@ class ContractDAO:
             (id_emp, id_puesto, id_depto, id_tipo, id_jornada, 
             f_kardex, s_inicial, f_ini, f_fin, salario) = data_contrato
 
+            # -----------------------------------------------------------
+            # VALIDACIÓN CORREGIDA: Concurrencia por Tipo
+            # -----------------------------------------------------------
+            # Verificamos si ya existe un contrato ACTIVO para este empleado
+            # PERO SOLO SI ES DEL MISMO TIPO.
+            cursor.execute("""
+                SELECT id_contrato, fecha_inicio 
+                FROM contratos 
+                WHERE id_empleado = ? 
+                  AND id_tipo_contrato = ? 
+                  AND activo = 1
+            """, (id_emp, id_tipo))
+            
+            active_contract = cursor.fetchone()
+            
+            if active_contract:
+                conn.close()
+                # Recuperamos el nombre del tipo para un mensaje más claro
+                cursor = self.db.get_connection().cursor() # Reabrimos cursors simples si es necesario o usamos lógica previa
+                # (Para simplificar el ejemplo, mostramos el error genérico)
+                return False, f"El empleado ya tiene un contrato activo de este mismo Tipo (Iniciado el {active_contract[1]}).\nDebe finalizar el contrato actual de esta categoría antes de abrir uno nuevo."
+            
+            # Opcional: Validación de solapamiento de fechas incluso si el anterior está inactivo
+            # (Para evitar que crees un contrato histórico que choque con fechas de otro del mismo tipo)
+            cursor.execute("""
+                SELECT MAX(fecha_fin) 
+                FROM contratos 
+                WHERE id_empleado = ? 
+                  AND id_tipo_contrato = ?
+                  AND activo = 0
+            """, (id_emp, id_tipo))
+            
+            row_last = cursor.fetchone()
+            last_end_date = row_last[0] if row_last else None
+            
+            if last_end_date and f_ini <= last_end_date:
+                conn.close()
+                return False, f"Conflicto de fechas: El nuevo contrato inicia ({f_ini}) antes de que termine el último contrato de este tipo ({last_end_date})."
+            # -----------------------------------------------------------
+
             # 2. CÁLCULO DE DNI PERC (Regla de negocio automática)
             dni_perc = self._calculate_dni_perc(cursor, id_emp, id_tipo)
 
@@ -137,55 +178,81 @@ class ContractDAO:
                 f_kardex, s_inicial, 
                 f_ini, f_fin, salario, _id_con_param) = data_contrato
                 
-                # 1. RECUPERAR ID_EMPLEADO
+                # 1. RECUPERAR DATOS CLAVE
                 cursor.execute("SELECT id_empleado FROM contratos WHERE id_contrato = ?", (id_contrato,))
                 row_emp = cursor.fetchone()
                 if not row_emp: raise Exception("Contrato no encontrado")
                 id_emp = row_emp[0]
 
-                # 2. RECALCULAR DNI PERC
+                # 2. RECALCULAR DNI PERC (Por si cambió el tipo de contrato)
                 dni_perc = self._calculate_dni_perc(cursor, id_emp, id_tipo)
 
+                # ---------------------------------------------------------
+                # 3. LÓGICA DE ESTADO AUTOMÁTICO (NUEVO)
+                # ---------------------------------------------------------
+                # Por defecto asumimos que sigue activo
+                nuevo_estado = 1 
+                
+                if f_fin:
+                    # Obtenemos fecha de hoy (YYYY-MM-DD)
+                    hoy = datetime.now().strftime('%Y-%m-%d')
+                    
+                    # Si la fecha fin es menor a hoy, SE DESACTIVA
+                    if f_fin < hoy:
+                        nuevo_estado = 0
+                    
+                    # Validación de coherencia
+                    if f_fin < f_ini:
+                        raise Exception("La fecha fin no puede ser anterior a la fecha de inicio.")
+                # ---------------------------------------------------------
+
+                # 4. UPDATE (Agregamos la columna 'activo' al query)
                 query = """
                     UPDATE contratos 
                     SET id_puesto=?, id_departamento=?, id_tipo_contrato=?, id_jornada=?,
                         fecha_inicio_kardex=?, saldo_inicial_vacaciones=?,
                         fecha_inicio=?, fecha_fin=?, salario=?,
-                        dni_perc=?
+                        dni_perc=?,
+                        activo=?  -- <--- Actualizamos estado explícitamente
                     WHERE id_contrato=?
                 """
                 cursor.execute(query, (id_puesto, id_depto, id_tipo, id_jornada, f_kardex, s_inicial, 
-                                    f_ini, f_fin, salario, dni_perc, id_contrato))
+                                    f_ini, f_fin, salario, dni_perc, 
+                                    nuevo_estado, # <--- Pasamos el valor calculado
+                                    id_contrato))
                 
-                # Costos...
+                # 5. ACTUALIZAR COSTOS (Igual que antes)
                 cursor.execute("DELETE FROM distribucion_costos WHERE id_contrato=?", (id_contrato,))
                 for uid, pct in lista_costos:
                     cursor.execute("INSERT INTO distribucion_costos (id_contrato, id_unidad, porcentaje) VALUES (?, ?, ?)", (id_contrato, uid, pct))
 
-                # Sincronizar Kardex (Saldo Inicial)
+                # 6. KARDEX (Igual que antes)
                 if f_kardex:
                     self._sync_initial_balance_kardex(cursor, id_contrato, f_kardex, s_inicial)
 
                 conn.commit()
-                operation_success = True # Marcamos bandera de éxito
+                operation_success = True 
                 
+            except sqlite3.IntegrityError as e:
+                # Si salta error aquí, es porque NO has ejecutado el script de migración todavía
+                conn.rollback()
+                operation_success = False
+                error_msg = f"Error de integridad (¿Ya ejecutaste la migración del UNIQUE?): {e}"
             except Exception as e:
                 conn.rollback()
                 operation_success = False
                 error_msg = str(e)
             finally:
-                conn.close() # ¡CERRAMOS LA CONEXIÓN A (IMPORTANTE)!
+                conn.close()
 
-            # --- LÓGICA POST-CIERRE (FUERA DEL BLOQUE DE CONEXIÓN A) ---
+            # Post-Cierre
             if operation_success:
                 try:
-                    # Disparamos el recálculo inmediato de los meses pendientes
                     vac_service = VacationService()
                     vac_service.process_monthly_accruals(id_contrato)
-                    return True, "Contrato actualizado y acumulaciones recalculadas."
+                    return True, "Contrato actualizado correctamente."
                 except Exception as e_acc:
-                    # Si falla el cálculo, al menos avisamos, pero el contrato ya se guardó
-                    print(f"Advertencia: Contrato guardado pero falló recálculo: {e_acc}")
+                    print(f"Advertencia recálculo: {e_acc}")
                     return True, "Contrato actualizado (Advertencia: Revise Kardex)."
             else:
                 return False, error_msg
@@ -333,3 +400,32 @@ class ContractDAO:
         rows = cursor.fetchall()
         conn.close()
         return rows
+
+    def check_expired_contracts(self):
+            """
+            Método de mantenimiento: Busca contratos activos cuya fecha fin 
+            sea anterior a hoy y los desactiva automáticamente.
+            """
+            conn = self.db.get_connection()
+            count = 0
+            try:
+                cursor = conn.cursor()
+                hoy = datetime.now().strftime('%Y-%m-%d')
+                
+                # Query mágica
+                query = """
+                    UPDATE contratos 
+                    SET activo = 0 
+                    WHERE activo = 1 
+                    AND fecha_fin IS NOT NULL 
+                    AND fecha_fin < ?
+                """
+                cursor.execute(query, (hoy,))
+                count = cursor.rowcount
+                conn.commit()
+                if count > 0:
+                    print(f"🧹 Mantenimiento: Se desactivaron {count} contratos vencidos.")
+            except Exception as e:
+                print(f"❌ Error verificando vencimientos: {e}")
+            finally:
+                conn.close()
