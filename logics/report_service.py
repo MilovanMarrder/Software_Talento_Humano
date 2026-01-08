@@ -3,6 +3,7 @@ from logics.vacation_service import VacationService
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
+from models.attendance_dao import AttendanceDAO
 
 class ReportService:
     def __init__(self):
@@ -183,3 +184,79 @@ class ReportService:
 
         except Exception as e:
             return False, f"Error al exportar Excel: {str(e)}"
+        
+
+
+    def export_attendance_excel(self, id_empleado, f_ini, f_fin, filepath, employee_name="Inasistencias"):
+        """
+        Genera reporte de inasistencias filtrado.
+        """
+        try:
+            # 1. Obtener datos (Instanciamos DAO aquí o lo recibimos en __init__)
+            # Asumo que puedes instanciarlo aquí si no está inyectado
+            from models.attendance_dao import AttendanceDAO 
+            dao = AttendanceDAO()
+            rows = dao.get_history_by_employee(id_empleado, f_ini, f_fin)
+            
+            if not rows:
+                return False, "No hay datos para exportar en el rango seleccionado."
+
+            # 2. Configurar Excel
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            
+            # Limpieza nombre hoja
+            invalid_chars = ['[', ']', ':', '*', '?', '/', '\\']
+            clean_name = employee_name
+            for char in invalid_chars: clean_name = clean_name.replace(char, '')
+            ws.title = clean_name[:30]
+
+            # 3. Estilos
+            header_font = Font(bold=True, color="FFFFFF")
+            header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+            
+            # 4. Encabezados
+            headers = [
+                "ID", "Fecha Inicio", "Fecha Fin", "Tipo Inasistencia", 
+                "Puesto Afectado", "Duración", "Horario", "Comentario"
+            ]
+            ws.append(headers)
+
+            for col_num, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col_num)
+                cell.font = header_font
+                cell.fill = header_fill
+
+            # 5. Llenado de filas
+            for r in rows:
+                # r índices: 0:id, 1:ini, 2:fin, 3:tipo, 4:puesto, 5:obs, 6:es_horas, 7:h_ini, 8:h_fin, 9:h_tot, 10:dias
+                
+                # Formatear Duración
+                if r[6] == 1: # Es por horas
+                    duracion = f"{r[9]} horas"
+                    horario = f"{r[7]} - {r[8]}"
+                else:
+                    duracion = f"{r[10]} días"
+                    horario = "Día Completo"
+
+                ws.append([
+                    r[0], # ID
+                    r[1], # Fecha Ini
+                    r[2], # Fecha Fin
+                    r[3], # Tipo
+                    r[4], # Puesto
+                    duracion,
+                    horario,
+                    r[5]  # Comentario
+                ])
+
+            # 6. Ajuste de Columnas
+            dims = [8, 15, 15, 25, 30, 15, 20, 40]
+            for i, width in enumerate(dims, 1):
+                ws.column_dimensions[get_column_letter(i)].width = width
+
+            wb.save(filepath)
+            return True, "Reporte de Inasistencias exportado correctamente."
+
+        except Exception as e:
+            return False, f"Error al exportar: {str(e)}"

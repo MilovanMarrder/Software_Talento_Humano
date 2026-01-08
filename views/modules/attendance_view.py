@@ -3,41 +3,50 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from datetime import datetime
 from tkinter.simpledialog import askfloat
+from tkinter import filedialog  # <--- Importante para guardar archivos
 
 # Importaciones del proyecto
 from views.components.employee_selector import EmployeeSelector
 from models.attendance_dao import AttendanceDAO
 from logics.time_calculator import TimeCalculator
+from logics.report_service import ReportService # <--- Importante para la lógica de Excel
 
 class AttendanceView(ttk.Frame):
     def __init__(self, parent, controller=None):
         super().__init__(parent)
         self.pack(fill=BOTH, expand=True)
         self.controller = controller
-        self.dao = AttendanceDAO() # Instancia local para datos directos
+        self.dao = AttendanceDAO() 
+        self.report_service = ReportService()
         
         # --- ESTADOS Y VARIABLES ---
         self.current_emp_id = None
-        self.contracts_map = [] # [(id, texto), ...]
-        self.types_map = []     # [(id, texto), ...]
+        self.contracts_map = [] 
+        self.types_map = []     
         
-        # Variables de Fecha (Con valores por defecto hoy)
+        # Variables de Fecha para Registro
         hoy = datetime.now().strftime("%Y-%m-%d")
         self.var_fecha_ini = ttk.StringVar(value=hoy)
         self.var_fecha_fin = ttk.StringVar(value=hoy)
         
-        # Variables de Hora (Valores default jornada estándar)
+        # Variables de Hora
         self.var_hora_ini = ttk.StringVar(value="08:00")
         self.var_hora_fin = ttk.StringVar(value="16:00")
         
         # Variable Lógica
         self.var_es_por_horas = ttk.BooleanVar(value=False)
         
-        # Variable Cálculo (La que edita el usuario)
+        # Variable Cálculo
         self.var_dias_calculados = ttk.DoubleVar(value=1.0)
 
+        # --- VARIABLES DE FILTRO (NUEVO) ---
+        now = datetime.now()
+        first_day = f"{now.year}-01-01"
+        last_day = f"{now.year}-12-31"
+        self.var_filtro_ini = ttk.StringVar(value=first_day)
+        self.var_filtro_fin = ttk.StringVar(value=last_day)
+
         # --- "ESPIAS" (Traces) ---
-        # Detectan cambios en las fechas sin tocar el widget calendario (evita errores)
         self.var_fecha_ini.trace_add("write", self._on_dates_changed)
         self.var_fecha_fin.trace_add("write", self._on_dates_changed)
 
@@ -100,7 +109,7 @@ class AttendanceView(ttk.Frame):
         self.date_ini.entry.config(textvariable=self.var_fecha_ini)
         self.date_ini.pack(side=LEFT, fill=X, expand=True)
 
-        # Fila Fin (Dinámica: Se oculta si es por horas)
+        # Fila Fin (Dinámica)
         self.frame_fin = ttk.Frame(lbl_fechas)
         self.frame_fin.pack(fill=X, pady=2)
         ttk.Label(self.frame_fin, text="Hasta:", width=8).pack(side=LEFT)
@@ -108,15 +117,15 @@ class AttendanceView(ttk.Frame):
         self.date_fin.entry.config(textvariable=self.var_fecha_fin)
         self.date_fin.pack(side=LEFT, fill=X, expand=True)
 
-        # Fila Horas (Dinámica: Se muestra si es por horas)
+        # Fila Horas (Dinámica)
         self.frame_horas = ttk.Frame(lbl_fechas)
-        # No hacemos pack aquí, se hace en toggle_hours_inputs
+        # No pack() aquí, se hace en toggle_hours_inputs
         ttk.Label(self.frame_horas, text="Horario:", width=8).pack(side=LEFT)
         ttk.Entry(self.frame_horas, textvariable=self.var_hora_ini, width=8).pack(side=LEFT, padx=2)
         ttk.Label(self.frame_horas, text=" a ").pack(side=LEFT)
         ttk.Entry(self.frame_horas, textvariable=self.var_hora_fin, width=8).pack(side=LEFT, padx=2)
 
-        # --- DÍAS CALCULADOS (Editable) ---
+        # --- DÍAS CALCULADOS ---
         row_calc = ttk.Frame(form_frame)
         row_calc.pack(fill=X, pady=15)
         
@@ -140,13 +149,46 @@ class AttendanceView(ttk.Frame):
         # Botón Guardar
         ttk.Button(form_frame, text="GUARDAR REGISTRO", command=self._handle_save, bootstyle="success").pack(fill=X, pady=20)
 
-        # Botón Ajuste Manual Saldo (Extra)
+        # Botón Ajuste Manual
         ttk.Button(form_frame, text="Ajuste Manual Saldo", command=self.add_balance_manual, bootstyle="secondary-outline").pack(fill=X)
 
         # --- COLUMNA DERECHA: HISTORIAL ---
-        hist_frame = ttk.Labelframe(main_frame, text="Historial Reciente", padding=10, bootstyle="secondary")
+        hist_frame = ttk.Labelframe(main_frame, text="Historial e Informes", padding=10, bootstyle="secondary")
         hist_frame.pack(side=RIGHT, fill=BOTH, expand=True, padx=(5, 0))
 
+        # === PANEL DE FILTROS ===
+        filter_frame = ttk.Frame(hist_frame)
+        filter_frame.pack(fill=X, pady=(0, 10))
+
+        # Selector Inicio
+        ttk.Label(filter_frame, text="Desde:").pack(side=LEFT)
+        de_ini = ttk.DateEntry(filter_frame, dateformat="%Y-%m-%d", firstweekday=0, width=10)
+        de_ini.entry.config(textvariable=self.var_filtro_ini)
+        de_ini.pack(side=LEFT, padx=5)
+
+        # Selector Fin
+        ttk.Label(filter_frame, text="Hasta:").pack(side=LEFT)
+        de_fin = ttk.DateEntry(filter_frame, dateformat="%Y-%m-%d", firstweekday=0, width=10)
+        de_fin.entry.config(textvariable=self.var_filtro_fin)
+        de_fin.pack(side=LEFT, padx=5)
+
+        # Botón Filtrar
+        ttk.Button(
+            filter_frame, 
+            text="↻ Filtrar", 
+            command=self._refresh_history, 
+            bootstyle="secondary-outline"
+        ).pack(side=LEFT, padx=5)
+
+        # Botón Excel
+        ttk.Button(
+            filter_frame, 
+            text="📥 Excel", 
+            command=self.export_excel, 
+            bootstyle="success-outline"
+        ).pack(side=RIGHT)
+        
+        # === TREEVIEW ===
         cols = ("id", "ini", "fin", "tipo", "puesto")
         self.tree = ttk.Treeview(hist_frame, columns=cols, show="headings", height=10)
         
@@ -166,7 +208,6 @@ class AttendanceView(ttk.Frame):
     # --- LÓGICA DE NEGOCIO ---
 
     def _load_initial_catalogs(self):
-        """Carga los tipos de inasistencia al iniciar"""
         self.types_map = self.dao.get_tipos_inasistencia_combo()
         self.cb_tipo['values'] = [x[1] for x in self.types_map]
 
@@ -177,7 +218,6 @@ class AttendanceView(ttk.Frame):
         self.current_emp_id = emp_id
         self.lbl_emp_info.config(text=f"{emp_code} - {emp_name}", bootstyle="primary")
         
-        # Cargar Contratos
         self.contracts_map = self.dao.get_active_contracts_by_employee(emp_id)
         
         if not self.contracts_map:
@@ -206,29 +246,21 @@ class AttendanceView(ttk.Frame):
             self.lbl_saldo.config(text=f"Saldo Disponible: {saldo} días", bootstyle=color)
 
     def toggle_hours_inputs(self):
-        """Alterna entre vista de Fechas (Días) y Vista de Horas"""
         if self.var_es_por_horas.get():
-            # MODO HORAS
-            self.frame_fin.pack_forget() # Ocultar fecha fin
-            self.frame_horas.pack(fill=X, pady=2) # Mostrar horas
-            # En modo horas, sugerimos 0 días por defecto (se calcula diferente) o dejamos que calculen fracción
+            self.frame_fin.pack_forget()
+            self.frame_horas.pack(fill=X, pady=2)
             self.var_dias_calculados.set(0.0) 
         else:
-            # MODO DÍAS
             self.frame_horas.pack_forget()
             self.frame_fin.pack(fill=X, pady=2)
-            # Recalcular días inmediatamente
             self._on_dates_changed()
 
     def _on_dates_changed(self, *args):
-        """Calcula duración automáticamente al escribir/seleccionar fechas"""
-        if self.var_es_por_horas.get():
-            return 
+        if self.var_es_por_horas.get(): return 
 
         f_ini = self.var_fecha_ini.get()
         f_fin = self.var_fecha_fin.get()
         
-        # Evitar cálculos con fechas incompletas
         if len(f_ini) < 10 or len(f_fin) < 10: return
 
         try:
@@ -240,20 +272,16 @@ class AttendanceView(ttk.Frame):
             pass 
 
     def _handle_save(self):
-        """Proceso unificado de guardado"""
-        # 1. Validaciones Básicas
         if not self.current_emp_id: return Messagebox.show_warning("Seleccione un empleado.")
         if not self.cb_contrato.get(): return Messagebox.show_warning("Seleccione un contrato.")
         if not self.cb_tipo.get(): return Messagebox.show_warning("Seleccione el tipo de inasistencia.")
 
-        # 2. Obtener IDs
         txt_contrato = self.cb_contrato.get()
         id_contrato = next((x[0] for x in self.contracts_map if x[1] == txt_contrato), None)
         
         txt_tipo = self.cb_tipo.get()
         id_tipo = next((x[0] for x in self.types_map if x[1] == txt_tipo), None)
 
-        # 3. Obtener Datos de Tiempo
         es_por_horas = self.var_es_por_horas.get()
         f_ini = self.var_fecha_ini.get()
         f_fin = self.var_fecha_fin.get() if not es_por_horas else f_ini
@@ -261,24 +289,20 @@ class AttendanceView(ttk.Frame):
         h_ini = self.var_hora_ini.get() if es_por_horas else "00:00"
         h_fin = self.var_hora_fin.get() if es_por_horas else "00:00"
 
-        # 4. Validar Fecha Lógica
         if not es_por_horas and f_ini > f_fin:
              return Messagebox.show_error("La fecha de inicio no puede ser posterior a la fecha fin.")
 
-        # 5. OBTENER DÍAS MANUALES (El punto crítico)
         try:
             dias_finales = float(self.var_dias_calculados.get())
         except ValueError:
             return Messagebox.show_error("El número de días no es válido.")
 
-        # Confirmación si es 0
         if dias_finales == 0 and not es_por_horas:
             if Messagebox.show_question("¿Guardar registro con 0 días?", "Confirmar") != 'Yes':
                 return
 
         detalle = self.entry_detalle.get() or "Sin observación"
 
-        # 6. LLAMADA AL DAO (Pasando dias_manual)
         success, message = self.dao.insert_inasistencia(
             id_con=id_contrato,
             id_tipo=id_tipo,
@@ -288,23 +312,32 @@ class AttendanceView(ttk.Frame):
             h_ini=h_ini,
             h_fin=h_fin,
             detalle=detalle,
-            dias_manual=dias_finales # <--- AQUÍ SE ENVÍA LO QUE EL USUARIO EDITÓ
+            dias_manual=dias_finales 
         )
 
         if success:
             Messagebox.show_info(message, "Éxito")
             self.entry_detalle.delete(0, END)
             self._refresh_history()
-            self.on_contract_change(None) # Actualizar saldo
+            self.on_contract_change(None) 
         else:
             Messagebox.show_error(message, "Error de Base de Datos")
 
     def _refresh_history(self):
+        # Limpiar tabla
         for item in self.tree.get_children(): self.tree.delete(item)
+        
         if not self.current_emp_id: return
 
-        rows = self.dao.get_history_by_employee(self.current_emp_id)
+        # Obtener filtros
+        f_ini = self.var_filtro_ini.get()
+        f_fin = self.var_filtro_fin.get()
+
+        # Obtener datos filtrados
+        rows = self.dao.get_history_by_employee(self.current_emp_id, f_ini, f_fin)
+        
         for r in rows:
+            # Solo mostramos los primeros 5 datos en el Grid
             self.tree.insert("", END, values=r[:5])
 
     def delete_record(self):
@@ -333,3 +366,45 @@ class AttendanceView(ttk.Frame):
             if ok:
                 Messagebox.show_info("Saldo actualizado", "Éxito")
                 self.on_contract_change(None)
+
+    def export_excel(self):
+        """Manejador para exportar historial filtrado"""
+        if not self.current_emp_id:
+            Messagebox.show_warning("Seleccione un colaborador primero.")
+            return
+
+        f_ini = self.var_filtro_ini.get()
+        f_fin = self.var_filtro_fin.get()
+        
+        # Obtener nombre limpio para el archivo
+        emp_text = self.lbl_emp_info.cget("text") # Ej: "100475 - JUAN PEREZ"
+        if "-" in emp_text:
+            safe_name = emp_text.split("-")[1].strip()
+        else:
+            safe_name = "Empleado"
+        
+        safe_name = "".join([c for c in safe_name if c.isalnum() or c in (' ', '-', '_')]).strip()
+        filename = f"Inasistencias {safe_name} ({f_ini} al {f_fin}).xlsx"
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel Files", "*.xlsx")],
+            initialfile=filename,
+            title="Guardar Reporte de Inasistencias"
+        )
+
+        if not filepath: return
+
+        self.master.config(cursor="watch")
+        try:
+            success, msg = self.report_service.export_attendance_excel(
+                self.current_emp_id, f_ini, f_fin, filepath, employee_name=safe_name
+            )
+            if success:
+                Messagebox.show_info(msg, "Exportación Exitosa")
+            else:
+                Messagebox.show_error(msg, "Error")
+        except Exception as e:
+            Messagebox.show_error(f"Error inesperado: {e}", "Error")
+        finally:
+            self.master.config(cursor="")

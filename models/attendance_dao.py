@@ -24,25 +24,41 @@ class AttendanceDAO:
         conn.close()
         return rows
 
-    def get_history_by_employee(self, id_empleado):
+    def get_history_by_employee(self, id_empleado, fecha_ini=None, fecha_fin=None):
             conn = self.db.get_connection()
             cursor = conn.cursor()
+            
+            # Consulta base
             query = """
                 SELECT 
-                    i.id_inasistencia,
-                    i.fecha_inicio_real,
-                    i.fecha_fin_real,
-                    ti.nombre_tipo,
-                    p.nombre_puesto,
-                    i.comentario
+                    i.id_inasistencia,      -- 0
+                    i.fecha_inicio_real,    -- 1
+                    i.fecha_fin_real,       -- 2
+                    ti.nombre_tipo,         -- 3
+                    p.nombre_puesto,        -- 4
+                    i.comentario,           -- 5
+                    i.es_por_horas,         -- 6
+                    i.hora_inicio,          -- 7
+                    i.hora_fin,             -- 8
+                    i.horas_totales,        -- 9
+                    i.dias_descontar        -- 10
                 FROM inasistencias i
                 JOIN contratos c ON i.id_contrato = c.id_contrato
                 JOIN cat_tipos_inasistencia ti ON i.id_tipo = ti.id_tipo
                 JOIN cat_puestos p ON c.id_puesto = p.id_puesto
                 WHERE c.id_empleado = ?
-                ORDER BY i.fecha_inicio_real DESC
             """
-            cursor.execute(query, (id_empleado,))
+            
+            params = [id_empleado]
+
+            # Aplicar filtros si existen
+            if fecha_ini and fecha_fin:
+                query += " AND i.fecha_inicio_real BETWEEN ? AND ?"
+                params.extend([fecha_ini, fecha_fin])
+                
+            query += " ORDER BY i.fecha_inicio_real DESC"
+            
+            cursor.execute(query, params)
             rows = cursor.fetchall()
             conn.close()
             return rows

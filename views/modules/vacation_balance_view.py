@@ -215,42 +215,44 @@ class VacationBalanceView(ttk.Frame):
             self.master.config(cursor="")
 
     def export_excel(self):
-        """Manejador del botón Exportar"""
-        id_con, f_ini, f_fin = self._get_filter_data()
-        if not id_con:
-            Messagebox.show_warning("Seleccione un empleado y contrato primero.")
+        """Manejador para exportar historial filtrado"""
+        if not self.current_emp_id:
+            Messagebox.show_warning("Seleccione un colaborador primero.")
             return
 
-        fecha_corte = f_fin if f_fin else datetime.now().strftime("%Y-%m-%d")
-        # Limpiamos el nombre de caracteres prohibidos en windows (\ / : * ? " < > |)
-        safe_name = "".join([c for c in self.current_emp_name if c.isalnum() or c in (' ', '-', '_')]).strip()
+        f_ini = self.var_filtro_ini.get()
+        f_fin = self.var_filtro_fin.get()
         
-        filename = f"{safe_name} Saldo de Vacaciones al {fecha_corte}.xlsx"
-        # Pedir ubicación
+        # Obtener nombre limpio para el archivo
+        emp_text = self.lbl_emp_info.cget("text") # Ej: "100475 - JUAN PEREZ"
+        if "-" in emp_text:
+            safe_name = emp_text.split("-")[1].strip()
+        else:
+            safe_name = "Empleado"
+        
+        safe_name = "".join([c for c in safe_name if c.isalnum() or c in (' ', '-', '_')]).strip()
+        filename = f"Inasistencias {safe_name} ({f_ini} al {f_fin}).xlsx"
 
         filepath = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel Files", "*.xlsx")],
             initialfile=filename,
-            title="Guardar Kardex"
+            title="Guardar Reporte de Inasistencias"
         )
 
         if not filepath: return
 
-        # Ejecutar exportación
         self.master.config(cursor="watch")
         try:
-            # Asumiendo que ya actualizaste el ReportService con el código que te pasé
-            success, msg = self.report_service.export_kardex_excel(id_con, f_ini, f_fin, filepath,employee_name=self.current_emp_name)
-            
+            success, msg = self.report_service.export_attendance_excel(
+                self.current_emp_id, f_ini, f_fin, filepath, employee_name=safe_name
+            )
             if success:
                 Messagebox.show_info(msg, "Exportación Exitosa")
             else:
                 Messagebox.show_error(msg, "Error")
-        except AttributeError:
-             Messagebox.show_error("El servicio de reportes no tiene el método 'export_kardex_excel'.\nAsegúrese de actualizar 'logics/report_service.py'.", "Error de Código")
         except Exception as e:
-             Messagebox.show_error(f"Error inesperado: {str(e)}", "Error")
+            Messagebox.show_error(f"Error inesperado: {e}", "Error")
         finally:
             self.master.config(cursor="")
 
