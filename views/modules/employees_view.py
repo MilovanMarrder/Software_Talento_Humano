@@ -143,22 +143,39 @@ class EmployeesView(ttk.Frame):
     # --- Lógica de Interacción (Existente, ligeramente ajustada) ---
 
     def on_row_double_click(self, event):
-        selection = self.tree.selection()
-        if not selection: return
+            selection = self.tree.selection()
+            if not selection: return
 
-        item = self.tree.item(selection[0])
-        values = item['values']
-        
-        self.selected_id = values[0]
-        self.var_codigo.set(values[1])
-        self.var_dni.set(values[2])
-        self.var_nombres.set(values[3])
-        self.var_apellidos.set(values[4])
-        self.var_fecha.set(values[5])
-        
-        self.btn_save.configure(text="Actualizar Empleado", bootstyle="warning")
-        self.btn_cancel.pack(side=LEFT, padx=5)
-        self.btn_delete.pack(side=LEFT, padx=5)
+            # 1. Obtenemos lo único que no cambia: el ID
+            item = self.tree.item(selection[0])
+            # Tkinter a veces devuelve el ID como int o str, aseguramos int para comparar
+            selected_id = int(item['values'][0]) 
+            
+            # 2. Buscamos el registro ORIGINAL en nuestra caché de memoria (self.all_rows)
+            # Esto garantiza que obtenemos "0801" (str) y no 801 (int)
+            original_data = next((row for row in self.all_rows if row[0] == selected_id), None)
+
+            if not original_data:
+                return # Seguridad por si algo raro pasa
+
+            # original_data es tupla: (id, codigo, dni, nombres, apellidos, nacimiento)
+            
+            self.selected_id = original_data[0]
+            self.var_codigo.set(original_data[1])
+            
+            # AQUÍ ESTÁ LA MAGIA: Forzamos string explícitamente desde la fuente pura
+            # Si original_data[2] es None, ponemos ""
+            dni_real = str(original_data[2]) if original_data[2] is not None else ""
+            self.var_dni.set(dni_real) 
+            
+            self.var_nombres.set(original_data[3])
+            self.var_apellidos.set(original_data[4])
+            self.var_fecha.set(original_data[5])
+            
+            # Configuración visual (igual que antes)
+            self.btn_save.configure(text="Actualizar Empleado", bootstyle="warning")
+            self.btn_cancel.pack(side=LEFT, padx=5)
+            self.btn_delete.pack(side=LEFT, padx=5)
 
     def clear_form(self):
         self.selected_id = None

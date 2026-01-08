@@ -50,21 +50,32 @@ class EmployeeDAO:
             finally:
                 conn.close()
 
+# En models/employee_dao.py
+
     def update(self, id_empleado, codigo, dni, nombres, apellidos, fecha_nac):
-        """Actualiza un registro existente"""
+        """Actualiza un registro existente con sanitización"""
         conn = self.db.get_connection()
         try:
+            # 1. SANITIZACIÓN (Igual que en Insert)
+            # Forzamos que sea un string de solo números.
+            # Esto evita guiones, espacios y protege el formato texto.
+            dni_limpio = re.sub(r'\D', '', dni) if dni else None
+            codigo_final = codigo.strip()
+            
             query = """
                 UPDATE empleados 
                 SET codigo=?, dni=?, nombres=?, apellidos=?, fecha_nacimiento=?
                 WHERE id_empleado=?
             """
             cursor = conn.cursor()
-            cursor.execute(query, (codigo, dni, nombres, apellidos, fecha_nac, id_empleado))
+            # Usamos dni_limpio en lugar de dni raw
+            cursor.execute(query, (codigo_final, dni_limpio, nombres, apellidos, fecha_nac, id_empleado))
             conn.commit()
             return True, "Empleado actualizado correctamente."
-        except sqlite3.IntegrityError:
-            return False, "No se puede actualizar: El Código o DNI pertenecen a otro empleado."
+            
+        except sqlite3.IntegrityError as e:
+            # ... manejo de errores igual ...
+            return False, "Error de integridad (Código o DNI duplicado)."
         except Exception as e:
             return False, f"Error al actualizar: {e}"
         finally:
