@@ -123,36 +123,37 @@ class CatalogsDAO:
 
     # --- PUESTOS ---
     def get_puestos_detailed(self): 
-            """
-            Retorna datos enriquecidos.
-            AHORA SÍ hacemos JOIN con Departamentos para mostrar la realidad.
-            """
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            query = """
-                SELECT 
-                    p.id_puesto,                    -- 0
-                    p.nombre_puesto,                -- 1
-                    COALESCE(d.nombre, 'Sin Asignar') as depto_nombre, -- 2 (Dato Real)
-                    CASE WHEN p.tiene_personal_cargo = 1 THEN 'Sí' ELSE 'No' END as es_jefe, -- 3
-                    COALESCE(jefe.nombre_puesto, '---') as reporta_a, -- 4
-                    COALESCE(gp.codigo || ' - ' || gp.descripcion, '---') as grupo_perc, -- 5
-                    
-                    -- RAW DATA para edición
-                    p.id_departamento,              -- 6 (Nuevo campo clave)
-                    p.tiene_personal_cargo,         -- 7
-                    p.id_puesto_jefe,               -- 8
-                    p.id_grupo_perc                 -- 9
-                FROM cat_puestos p
-                LEFT JOIN cat_departamentos d ON p.id_departamento = d.id_departamento -- JOIN NUEVO
-                LEFT JOIN cat_puestos jefe ON p.id_puesto_jefe = jefe.id_puesto
-                LEFT JOIN cat_grupos_perc gp ON p.id_grupo_perc = gp.id_grupo
-                ORDER BY d.nombre, p.nombre_puesto
-            """
-            cursor.execute(query)
-            rows = cursor.fetchall()
-            conn.close()
-            return rows
+                """
+                Retorna datos enriquecidos.
+                AHORA SÍ hacemos JOIN con Departamentos para mostrar la realidad.
+                """
+                conn = self.db.get_connection()
+                cursor = conn.cursor()
+                query = """
+                    SELECT 
+                        p.id_puesto,                    -- 0
+                        p.nombre_puesto,                -- 1
+                        COALESCE(d.nombre, 'Sin Asignar') as depto_nombre, -- 2 
+                        CASE WHEN p.tiene_personal_cargo = 1 THEN 'Sí' ELSE 'No' END as es_jefe, -- 3
+                        COALESCE(jefe.nombre_puesto, '---') as reporta_a, -- 4
+                        COALESCE(gp.codigo || ' - ' || gp.descripcion, '---') as grupo_perc, -- 5
+                        
+                        -- RAW DATA para edición
+                        p.id_departamento,              -- 6 
+                        p.tiene_personal_cargo,         -- 7
+                        p.id_puesto_jefe,               -- 8
+                        p.id_grupo_perc                 -- 9
+                    FROM cat_puestos p
+                    LEFT JOIN cat_departamentos d ON p.id_departamento = d.id_departamento
+                    LEFT JOIN cat_puestos jefe ON p.id_puesto_jefe = jefe.id_puesto
+                    LEFT JOIN cat_grupos_perc gp ON p.id_grupo_perc = gp.id_grupo
+                    -- CAMBIO AQUÍ: Ordenar estrictamente por nombre del puesto
+                    ORDER BY p.nombre_puesto ASC
+                """
+                cursor.execute(query)
+                rows = cursor.fetchall()
+                conn.close()
+                return rows
         
     # Sobreescritura vital
     get_puestos = get_puestos_detailed 

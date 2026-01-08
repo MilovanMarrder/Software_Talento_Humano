@@ -112,7 +112,10 @@ class ConfigurationView(ttk.Frame):
 
 class CatalogTab(ttk.Frame):
     """
-    Componente CRUD Genérico v2.1 (Soporte Dinámico de Combos)
+    Componente CRUD Genérico v3.0 
+    - Soporte Dinámico de Combos
+    - Barra de Búsqueda y Filtrado en Vivo
+    - Ordenamiento estable
     """
     def __init__(self, parent, title, columns, dao_fetch, dao_crud, fields):
         super().__init__(parent, padding=10)
@@ -125,16 +128,22 @@ class CatalogTab(ttk.Frame):
         self.selected_id = None
         self.widgets = [] 
         
+        # --- NUEVO: Cache para filtrado ---
+        self.all_rows = [] 
+        self.var_search = ttk.StringVar()
+        self.var_search.trace("w", self._filter_data) # Trigger al escribir
+
         self._setup_ui()
+        # Cargamos los datos iniciales
         self.refresh_table()
 
     def _get_data_from_source(self, source):
-        """Helper inteligente: Si es función la ejecuta, si es lista la devuelve"""
         if callable(source):
             return source()
         return source
 
     def _setup_ui(self):
+            # 1. FRAME DEL FORMULARIO
             form_frame = ttk.Labelframe(self, text=f"Gestión de {self.title}", padding=15, bootstyle="info")
             form_frame.pack(fill=X, pady=5, padx=5)
             
@@ -144,6 +153,7 @@ class CatalogTab(ttk.Frame):
             current_row = ttk.Frame(inputs_container)
             current_row.pack(fill=X, pady=5)
 
+            # Generación dinámica de inputs
             for field_conf in self.fields_config:
                 lbl_text = field_conf[0]
                 w_type = field_conf[1]
@@ -159,19 +169,13 @@ class CatalogTab(ttk.Frame):
                     
                 elif w_type == "combo":
                     ttk.Label(f_item, text=lbl_text, font=("Segoe UI", 9)).pack(anchor=W)
-                    
-                    # 1. Obtener fuente raw (función o lista)
                     raw_source = field_conf[2]
-                    
-                    # 2. Resolver datos actuales
                     current_data = self._get_data_from_source(raw_source)
                     sorted_source = sorted(current_data, key=lambda x: x[1]) if current_data else []
                     values = [x[1] for x in sorted_source]
                     
                     w = ttk.Combobox(f_item, values=values, state="readonly", width=25)
                     w.pack(pady=2)
-                    
-                    # Guardamos 'raw_source_ref' para poder refrescar luego
                     self.widgets.append({
                         'type': 'combo', 
                         'widget': w, 
@@ -186,7 +190,7 @@ class CatalogTab(ttk.Frame):
                     w.pack(pady=5)
                     self.widgets.append({'type': 'check', 'widget': w, 'var': var})
 
-            # BOTONES
+            # BOTONES DEL FORMULARIO
             btn_frame = ttk.Frame(form_frame)
             btn_frame.pack(fill=X, pady=(15, 0))
             center_btns = ttk.Frame(btn_frame)
@@ -199,56 +203,101 @@ class CatalogTab(ttk.Frame):
             self.btn_delete = ttk.Button(center_btns, text="🗑 Eliminar", command=self.delete, bootstyle="danger", width=15)
             self.btn_delete.pack(side=LEFT, padx=5)
 
-            # TABLA
+            # ---------------------------------------------------------
+            # 2. BARRA DE BÚSQUEDA (NUEVO)
+            # ---------------------------------------------------------
+            search_frame = ttk.Frame(self, padding=(5, 10))
+            search_frame.pack(fill=X, padx=5)
+            
+            ttk.Label(search_frame, text="🔍 Buscar:", bootstyle="secondary").pack(side=LEFT, padx=(5, 5))
+            entry_search = ttk.Entry(search_frame, textvariable=self.var_search)
+            entry_search.pack(side=LEFT, fill=X, expand=True, padx=5)
+            
+            # Botón 'X' para limpiar búsqueda
+            ttk.Button(search_frame, text="✕", command=lambda: self.var_search.set(""), 
+                       bootstyle="link-secondary", width=3).pack(side=LEFT)
+
+            # ---------------------------------------------------------
+            # 3. TABLA
+            # ---------------------------------------------------------
             self.tree = ttk.Treeview(self, columns=[str(i) for i in range(len(self.columns))], show="headings", bootstyle="info")
             for i, col_name in enumerate(self.columns):
                 self.tree.heading(str(i), text=col_name)
-                width = 200 if "Nombre" in col_name else 100
+                # Ajuste de ancho inteligente
+                width = 250 if "Nombre" in col_name or "Descripción" in col_name else 100
                 self.tree.column(str(i), width=width)
             
-            self.tree.pack(fill=BOTH, expand=True, pady=10, padx=5)
+            self.tree.pack(fill=BOTH, expand=True, pady=0, padx=5)
             sb = ttk.Scrollbar(self.tree, orient=VERTICAL, command=self.tree.yview)
             self.tree.configure(yscroll=sb.set)
             sb.pack(side=RIGHT, fill=Y)
             self.tree.bind("<Double-1>", self.on_double_click)
 
+    # --- LÓGICA DE DATOS Y FILTRADO (NUEVO) ---
+
+    def refresh_table(self):
+        """Obtiene datos frescos de BD y aplica el filtro actual"""
+        # 1. Cargar todo a memoria
+        self.all_rows = self.dao_fetch()
+        # 2. Renderizar aplicando filtro
+        self._filter_data()
+
+    def _filter_data(self, *args):
+        """Filtra la lista en memoria y actualiza el Treeview"""
+        term = self.var_search.get().lower().strip()
+        
+        # Limpiar tabla
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        filtered_rows = []
+        if not term:
+            filtered_rows = self.all_rows
+        else:
+            # Lógica de búsqueda genérica: 
+            # Busca el término en CUALQUIER columna visible de la fila
+            for row in self.all_rows:
+                # Tomamos solo las columnas visibles (según self.columns)
+                visual_data = row[:len(self.columns)]
+                # Convertimos todo a string y buscamos coincidencia
+                row_str = " ".join([str(val).lower() for val in visual_data if val is not None])
+                
+                if term in row_str:
+                    filtered_rows.append(row)
+        
+        # Llenar tabla
+        for row in filtered_rows:
+            visual_row = row[:len(self.columns)]
+            # Guardamos la fila COMPLETA (raw data) en los tags o hidden values para recuperarla al editar
+            self.tree.insert("", END, values=visual_row, tags=(row,)) 
+
+    # --- (El resto de métodos se mantienen casi igual, solo ajustes menores) ---
+
     def _reload_combos(self):
-        """
-        Método mágico: Recorre los combos y ejecuta sus funciones fuente nuevamente.
-        Esto actualiza la lista de Jefes, Departamentos, etc. tras un guardado.
-        """
         for w_conf in self.widgets:
             if w_conf['type'] == 'combo':
-                # Re-ejecutar la función fuente
                 raw_source = w_conf['raw_source_ref']
                 current_data = self._get_data_from_source(raw_source)
-                
-                # Actualizar memoria interna y valores visuales
                 sorted_source = sorted(current_data, key=lambda x: x[1]) if current_data else []
                 w_conf['source'] = sorted_source
                 w_conf['widget']['values'] = [x[1] for x in sorted_source]
 
-    def refresh_table(self):
-        for item in self.tree.get_children(): self.tree.delete(item)
-        rows = self.dao_fetch()
-        for row in rows:
-            visual_row = row[:len(self.columns)]
-            self.tree.insert("", END, values=visual_row, tags=(row,)) 
-            
     def on_double_click(self, event):
-            # (IMPORTANTE: Antes de editar, aseguramos que los combos estén frescos)
             self._reload_combos()
-            
             sel = self.tree.selection()
             if not sel: return
             item = self.tree.item(sel[0])
-            row_id = item['values'][0]
+            
+            # Recuperamos ID visualmente
+            row_id = item['values'][0] 
 
-            full_rows = self.dao_fetch()
-            actual_data = next((r for r in full_rows if r[0] == row_id), None)
-            if not actual_data: return
+            # Recuperamos DATA REAL desde self.all_rows usando el ID
+            # Esto es más seguro que confiar en los tags si filtramos
+            full_data_row = next((r for r in self.all_rows if str(r[0]) == str(row_id)), None)
+            
+            if not full_data_row: return
 
-            self.selected_id = row_id
+            self.selected_id = full_data_row[0]
             self.btn_save.config(text="Actualizar", bootstyle="warning")
 
             visual_idx = 1 
@@ -256,23 +305,25 @@ class CatalogTab(ttk.Frame):
 
             for w_conf in self.widgets:
                 if w_conf['type'] == 'text':
-                    val = actual_data[visual_idx]
+                    val = full_data_row[visual_idx]
                     w_conf['widget'].delete(0, END)
                     w_conf['widget'].insert(0, str(val) if val is not None else "")
                     visual_idx += 1
 
                 elif w_conf['type'] in ['combo', 'check']:
-                    if len(actual_data) > len(self.columns):
-                        val_raw = actual_data[raw_idx]
+                    # Lógica para determinar si el dato viene de columnas visibles o ocultas (raw)
+                    if len(full_data_row) > len(self.columns):
+                        val_raw = full_data_row[raw_idx]
                         raw_idx += 1
                     else:
-                        val_raw = actual_data[visual_idx]
+                        val_raw = full_data_row[visual_idx]
                         visual_idx += 1
 
                     if w_conf['type'] == 'combo':
                         if val_raw is None:
                             w_conf['widget'].set('')
                         else:
+                            # Buscamos el texto correspondiente al ID
                             txt = next((x[1] for x in w_conf['source'] if str(x[0]) == str(val_raw)), "")
                             w_conf['widget'].set(txt)
                     
@@ -285,9 +336,11 @@ class CatalogTab(ttk.Frame):
         for w in self.widgets:
             if w['type'] == 'text': w['widget'].delete(0, END)
             elif w['type'] == 'combo': w['widget'].set('')
-            elif w['type'] == 'check': w['var'].set(0) # Corregido: por defecto 0
-        self.btn_save.config(text="Guardar", bootstyle="success")
+            elif w['type'] == 'check': w['var'].set(0)
+        self.btn_save.config(text="💾 Guardar", bootstyle="success")
         self.tree.selection_remove(self.tree.selection())
+        # Opcional: Limpiar búsqueda al limpiar formulario
+        # self.var_search.set("") 
 
     def save(self):
             params = []
@@ -295,7 +348,7 @@ class CatalogTab(ttk.Frame):
                 if w['type'] == 'text':
                     val = w['widget'].get().strip()
                     if not val: 
-                        Messagebox.show_error("Los campos de texto son obligatorios", "Error")
+                        Messagebox.show_error("Campos de texto obligatorios", "Error")
                         return
                     params.append(val)
                 elif w['type'] == 'combo':
@@ -305,7 +358,7 @@ class CatalogTab(ttk.Frame):
                     else:
                         id_val = next((x[0] for x in w['source'] if x[1] == txt), None)
                         if id_val is None:
-                            Messagebox.show_error(f"El valor '{txt}' no es válido en la lista.", "Error")
+                            Messagebox.show_error(f"Valor '{txt}' no válido.", "Error")
                             return
                         params.append(id_val)
                 elif w['type'] == 'check':
@@ -319,21 +372,18 @@ class CatalogTab(ttk.Frame):
             if ok:
                 Messagebox.show_info(msg, "Éxito")
                 self.clear_form()
-                self.refresh_table()
-                # === AQUÍ ESTÁ LA MAGIA ===
-                # Al guardar (por ejemplo, un nuevo puesto que es jefe),
-                # refrescamos inmediatamente todos los combos de la pestaña.
+                self.refresh_table() # Esto recarga datos Y aplica el filtro existente
                 self._reload_combos() 
             else:
                 Messagebox.show_error(msg, "Error")
 
     def delete(self):
         if not self.selected_id: return
-        if Messagebox.yesno("¿Eliminar?", "Confirmar") == 'Yes':
+        if Messagebox.yesno("¿Eliminar registro?", "Confirmar") == 'Yes':
             ok, msg = self.dao_crud("DELETE", self.selected_id)
             if ok: 
                 self.clear_form()
                 self.refresh_table()
-                self._reload_combos() # También al eliminar refrescamos
+                self._reload_combos()
             else:
                 Messagebox.show_error(msg, "Error")
