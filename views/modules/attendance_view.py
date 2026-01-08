@@ -34,7 +34,7 @@ class AttendanceView(ttk.Frame):
         self.var_es_por_horas = ttk.BooleanVar(value=False)
         
         # Variable Cálculo (La que edita el usuario)
-        self.var_dias_calculados = ttk.DoubleVar(value=0.0)
+        self.var_dias_calculados = ttk.DoubleVar(value=1.0)
 
         # --- "ESPIAS" (Traces) ---
         # Detectan cambios en las fechas sin tocar el widget calendario (evita errores)
