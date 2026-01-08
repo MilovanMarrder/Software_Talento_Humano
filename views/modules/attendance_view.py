@@ -186,24 +186,41 @@ class AttendanceView(ttk.Frame):
             text="📥 Excel", 
             command=self.export_excel, 
             bootstyle="success-outline"
-        ).pack(side=RIGHT)
+        ).pack(side=RIGHT)        
         
         # === TREEVIEW ===
-        cols = ("id", "ini", "fin", "tipo", "puesto")
+        # Definimos las columnas (ID sigue existiendo pero será invisible)
+        cols = ("id", "ini", "fin", "duracion", "tipo", "puesto")
         self.tree = ttk.Treeview(hist_frame, columns=cols, show="headings", height=10)
         
-        self.tree.heading("id", text="ID")
-        self.tree.column("id", width=40, stretch=False)
-        self.tree.heading("ini", text="Desde")
-        self.tree.column("ini", width=90)
-        self.tree.heading("fin", text="Hasta")
-        self.tree.column("fin", width=90)
-        self.tree.heading("tipo", text="Motivo")
-        self.tree.heading("puesto", text="Puesto Afectado")
+        # 1. Configuración de Columnas (Ancho y Alineación)
+        
+        # ID: Invisible (Ancho 0), pero guarda el dato para poder borrar
+        self.tree.column("id", width=0, stretch=False) 
+        
+        # Fechas: Centradas
+        self.tree.heading("ini", text="Desde", anchor=CENTER)
+        self.tree.column("ini", width=85, anchor=CENTER)
+        
+        self.tree.heading("fin", text="Hasta", anchor=CENTER)
+        self.tree.column("fin", width=85, anchor=CENTER)
+        
+        # Duración: Centrada (NUEVO)
+        self.tree.heading("duracion", text="Duración", anchor=CENTER)
+        self.tree.column("duracion", width=80, anchor=CENTER)
+        
+        # Textos: Alineados a la Izquierda (W)
+        self.tree.heading("tipo", text="Motivo", anchor=W)
+        self.tree.column("tipo", width=150, anchor=W)
+        
+        self.tree.heading("puesto", text="Puesto Afectado", anchor=W)
+        self.tree.column("puesto", width=180, anchor=W)
         
         self.tree.pack(fill=BOTH, expand=True)
         
         ttk.Button(hist_frame, text="Eliminar Seleccionado", command=self.delete_record, bootstyle="danger-outline").pack(anchor=E, pady=5)
+    
+        
 
     # --- LÓGICA DE NEGOCIO ---
 
@@ -323,22 +340,44 @@ class AttendanceView(ttk.Frame):
         else:
             Messagebox.show_error(message, "Error de Base de Datos")
 
+            
     def _refresh_history(self):
-        # Limpiar tabla
-        for item in self.tree.get_children(): self.tree.delete(item)
-        
-        if not self.current_emp_id: return
+            # Limpiar tabla
+            for item in self.tree.get_children(): self.tree.delete(item)
+            
+            if not self.current_emp_id: return
 
-        # Obtener filtros
-        f_ini = self.var_filtro_ini.get()
-        f_fin = self.var_filtro_fin.get()
+            # Obtener filtros
+            f_ini = self.var_filtro_ini.get()
+            f_fin = self.var_filtro_fin.get()
 
-        # Obtener datos filtrados
-        rows = self.dao.get_history_by_employee(self.current_emp_id, f_ini, f_fin)
-        
-        for r in rows:
-            # Solo mostramos los primeros 5 datos en el Grid
-            self.tree.insert("", END, values=r[:5])
+            # Obtener datos filtrados del DAO
+            # Recordatorio de índices del DAO: 
+            # 0:id, 1:ini, 2:fin, 3:tipo, 4:puesto, 5:obs, 
+            # 6:es_horas, 7:h_ini, 8:h_fin, 9:h_totales, 10:dias_descontar
+            rows = self.dao.get_history_by_employee(self.current_emp_id, f_ini, f_fin)
+            
+            for r in rows:
+                # Lógica de visualización para Duración
+                es_horas = r[6]
+                if es_horas == 1:
+                    # Si es por horas, mostramos horas totales
+                    txt_duracion = f"{float(r[9]):.1f} hrs"
+                else:
+                    # Si es por días, mostramos días descontados
+                    txt_duracion = f"{float(r[10]):.1f} días"
+
+                # Preparamos la tupla para el Treeview (ID va primero pero oculto)
+                values = (
+                    r[0],           # id (columna 0, oculta)
+                    r[1],           # inicio
+                    r[2],           # fin
+                    txt_duracion,   # duración calculada
+                    r[3],           # tipo/motivo
+                    r[4]            # puesto
+                )
+                
+                self.tree.insert("", END, values=values)
 
     def delete_record(self):
         sel = self.tree.selection()
