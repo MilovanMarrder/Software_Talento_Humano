@@ -6,7 +6,8 @@ from views.components.employee_selector import EmployeeSelector
 from models.attendance_dao import AttendanceDAO 
 from models.kardex_dao import KardexDAO
 from logics.report_service import ReportService
-from datetime import datetime 
+from datetime import date
+
 
 class VacationBalanceView(ttk.Frame):
     def __init__(self, parent, controller=None):
@@ -216,22 +217,32 @@ class VacationBalanceView(ttk.Frame):
             self.master.config(cursor="")
 
     def export_excel(self):
-        """Manejador para exportar reporte INDIVIDUAL de VACACIONES"""
-        # 1. Obtener ID Contrato usando el helper existente
+        """Manejador para exportar reporte INDIVIDUAL con nombre detallado"""
+        # 1. Validar selección
         id_con, f_ini, f_fin = self._get_filter_data()
         
         if not id_con:
             Messagebox.show_warning("Seleccione un colaborador y contrato primero.")
             return
 
-        # Nombre limpio
-        safe_name = "Kardex"
-        if "-" in self.current_emp_name:
-            safe_name = self.current_emp_name.split("-")[1].strip()
-        
-        safe_name = "".join([c for c in safe_name if c.isalnum() or c in (' ', '-', '_')]).strip()
-        filename = f"Kardex {safe_name}.xlsx" # Simplificado nombre
+        # 2. Construir nombre del empleado
+        # Extraemos el nombre limpio del label (Ej: "100475 - JUAN PEREZ" -> "JUAN PEREZ")
+        raw_name = self.lbl_emp.cget("text")
+        if "-" in raw_name:
+            employee_name = raw_name.split("-", 1)[1].strip()
+        else:
+            employee_name = raw_name
 
+        safe_name = self._clean_filename(employee_name)
+
+        # 3. Construir fechas para el nombre del archivo
+        # Si no hay fecha fin, asumimos que es al corte de "HOY"
+        fecha_corte = f_fin if f_fin else date.today().strftime('%Y-%m-%d')
+
+        # Formato: "Vacaciones JUAN PEREZ (hasta 2025-10-20).xlsx"
+        filename = f"Vacaciones {safe_name} (hasta {fecha_corte}).xlsx"
+
+        # 4. Diálogo de Guardado
         filepath = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel Files", "*.xlsx")],
@@ -243,7 +254,7 @@ class VacationBalanceView(ttk.Frame):
 
         self.master.config(cursor="watch")
         try:
-            # CORRECCIÓN: Llamamos a export_kardex_excel (Vacaciones), no attendance
+            # IMPORTANTE: Pasamos 'employee_name=safe_name' para que la HOJA de Excel se llame así
             success, msg = self.report_service.export_kardex_excel(
                 id_con, f_ini, f_fin, filepath, employee_name=safe_name
             )
@@ -260,20 +271,28 @@ class VacationBalanceView(ttk.Frame):
         for i in self.tree.get_children(): self.tree.delete(i)
 
     def export_team_excel(self):
-        """Manejador para exportar reporte de EQUIPO (Jefatura)"""
+        """Manejador para exportar reporte de EQUIPO con nombre de Departamento"""
         id_con, f_ini, f_fin = self._get_filter_data()
         
         if not id_con:
             Messagebox.show_warning("Seleccione el contrato del JEFE del equipo a descargar.")
             return
 
-        # Nombre archivo basado en el Jefe
-        boss_name = "Jefe"
-        if "-" in self.current_emp_name:
-            boss_name = self.current_emp_name.split("-")[1].strip()
-        boss_name = "".join([c for c in boss_name if c.isalnum() or c in (' ', '-', '_')]).strip()
+        # 1. Instanciar ContractDAO para obtener el nombre del departamento
+        #    (Como ya importamos ContractDAO indirectamente o podemos usar self.att_dao.db si fuera necesario,
+        #     pero lo ideal es instanciarlo limpio)
+        from models.contract_dao import ContractDAO
+        dao = ContractDAO()
         
-        filename = f"Reporte Equipo - {boss_name}.xlsx"
+        # Obtener nombre del departamento del jefe seleccionado
+        dept_name = dao.get_department_name_by_contract(id_con)
+        safe_dept = self._clean_filename(dept_name)
+
+        # 2. Definir fecha de corte para el nombre
+        fecha_corte = f_fin if f_fin else date.today().strftime('%Y-%m-%d')
+
+        # 3. Formato Solicitado: "Vacaciones - {Departamento} hasta el {Fecha}.xlsx"
+        filename = f"Vacaciones {safe_dept} hasta {fecha_corte}.xlsx"
 
         filepath = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
@@ -285,10 +304,9 @@ class VacationBalanceView(ttk.Frame):
         if not filepath: return
 
         self.master.config(cursor="watch")
-        self.master.update() # Forzar actualización visual del cursor
+        self.master.update()
         
         try:
-            # Llamada al nuevo servicio
             success, msg = self.report_service.export_team_kardex_excel(
                 id_con, f_ini, f_fin, filepath
             )
@@ -302,3 +320,12 @@ class VacationBalanceView(ttk.Frame):
             Messagebox.show_error(f"Error crítico: {e}", "Error")
         finally:
             self.master.config(cursor="")
+
+    def _clean_filename(self, text):
+        """Helper para limpiar caracteres prohibidos en nombres de archivo"""
+        if not text: return "Archivo"
+        # Caracteres prohibidos en Windows/Linux
+        invalid = '<>:"/\|?*'
+        for char in invalid:
+            text = text.replace(char, '')
+        return text.strip()

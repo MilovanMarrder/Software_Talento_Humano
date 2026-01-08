@@ -512,3 +512,24 @@ class ContractDAO:
             return []
         finally:
             conn.close()
+
+
+
+    def get_department_name_by_contract(self, id_contrato):
+        """Devuelve el nombre del departamento asociado al contrato"""
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        try:
+            query = """
+                SELECT d.nombre 
+                FROM contratos c
+                JOIN cat_departamentos d ON c.id_departamento = d.id_departamento
+                WHERE c.id_contrato = ?
+            """
+            cursor.execute(query, (id_contrato,))
+            row = cursor.fetchone()
+            return row[0] if row else "General"
+        except Exception:
+            return "General"
+        finally:
+            conn.close()
