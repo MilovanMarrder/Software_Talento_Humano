@@ -457,3 +457,58 @@ class ContractDAO:
             rows = cursor.fetchall()
             conn.close()
             return rows
+    
+# --- AGREGAR EN: models/contract_dao.py ---
+
+    def get_direct_reports_by_contract(self, id_contrato_jefe):
+        """
+        Retorna lista de contratos (Jefe + Subordinados directos) basada en jerarquía de puestos.
+        Retorna: [(id_contrato, nombre_empleado, nombre_puesto), ...]
+        """
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        try:
+            # 1. Obtener el puesto del jefe
+            cursor.execute("SELECT id_puesto FROM contratos WHERE id_contrato = ?", (id_contrato_jefe,))
+            row = cursor.fetchone()
+            if not row: return []
+            id_puesto_jefe = row[0]
+
+            # 2. Buscar:
+            #    A) El contrato del Jefe (para que salga primero en el excel)
+            #    B) Contratos activos cuyo puesto tenga id_puesto_jefe igual al del jefe
+            query = """
+                SELECT 
+                    c.id_contrato, 
+                    e.nombres || ' ' || e.apellidos as nombre_completo,
+                    p.nombre_puesto,
+                    0 as orden -- Forzar al jefe primero
+                FROM contratos c
+                JOIN empleados e ON c.id_empleado = e.id_empleado
+                JOIN cat_puestos p ON c.id_puesto = p.id_puesto
+                WHERE c.id_contrato = ?
+                
+                UNION ALL
+                
+                SELECT 
+                    c.id_contrato, 
+                    e.nombres || ' ' || e.apellidos as nombre_completo,
+                    p.nombre_puesto,
+                    1 as orden
+                FROM contratos c
+                JOIN empleados e ON c.id_empleado = e.id_empleado
+                JOIN cat_puestos p ON c.id_puesto = p.id_puesto
+                WHERE c.activo = 1 
+                  AND p.id_puesto_jefe = ?
+                  AND c.id_contrato != ? -- Evitar duplicar al jefe si se auto-reportara
+                
+                ORDER BY orden ASC, nombre_completo ASC
+            """
+            cursor.execute(query, (id_contrato_jefe, id_puesto_jefe, id_contrato_jefe))
+            return cursor.fetchall()
+            
+        except Exception as e:
+            print(f"Error obteniendo equipo: {e}")
+            return []
+        finally:
+            conn.close()

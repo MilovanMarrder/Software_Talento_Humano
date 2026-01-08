@@ -4,11 +4,13 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from models.attendance_dao import AttendanceDAO
+from models.contract_dao import ContractDAO
 
 class ReportService:
     def __init__(self):
         self.kardex_dao = KardexDAO()
         self.vac_service = VacationService()
+        self.contract_dao = ContractDAO()
 
     def get_kardex_report_data(self, id_contrato, fecha_ini=None, fecha_fin=None):
         """
@@ -88,102 +90,117 @@ class ReportService:
         
         return response
     
+    # --- MÉTODO HELPER : Escribe los datos en una hoja dada ---
+    def _write_kardex_sheet(self, ws, data, sheet_title):
+        """Método auxiliar para escribir una hoja de Kardex"""
+        
+        # 1. Limpieza nombre hoja
+        invalid_chars = ['[', ']', ':', '*', '?', '/', '\\']
+        clean_name = sheet_title
+        for char in invalid_chars:
+            clean_name = clean_name.replace(char, '')
+        ws.title = clean_name[:30] # Excel max 31 chars
+
+        # 2. Estilos
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        bold_font = Font(bold=True)
+        italic_font = Font(italic=True, color="555555")
+        total_fill = PatternFill(start_color="DCE6F1", fill_type="solid")
+
+        # 3. Encabezados
+        headers = ["Fecha", "Tipo Movimiento", "Detalle / Observación", "Debe (Devengado)", "Haber (Ganado)", "Saldo"]
+        ws.append(headers)
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.font = header_font
+            cell.fill = header_fill
+
+        # 4. Saldo Anterior
+        if data.get("saldo_anterior", 0) != 0:
+            ws.append(["---", "SALDO ANTERIOR", "Arrastre de periodo previo", "", "", data['saldo_anterior']])
+            for cell in ws[ws.max_row]: cell.font = bold_font
+
+        # 5. Movimientos
+        for row in data["movimientos"]:
+            ws.append([
+                row['fecha'], row['tipo'], row['detalle'],
+                row['debe'] if row['debe'] > 0 else "",
+                row['haber'] if row['haber'] > 0 else "",
+                row['saldo']
+            ])
+            if row.get('es_proyeccion'):
+                for cell in ws[ws.max_row]: cell.font = italic_font
+
+        # 6. Totales
+        tot = data["totales"]
+        ws.append(["", "TOTALES", "", tot['debe'], tot['haber'], tot['saldo_final']])
+        last_row = ws.max_row
+        for col in range(1, 7):
+            cell = ws.cell(row=last_row, column=col)
+            cell.font = bold_font
+            cell.fill = total_fill
+
+        # 7. Ajuste columnas
+        column_widths = [12, 25, 45, 15, 15, 15]
+        for i, width in enumerate(column_widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = width
+
+    # --- MÉTODO MODIFICADO: Individual ---
     def export_kardex_excel(self, id_contrato, f_ini, f_fin, filepath, employee_name="Kardex"):
-        """
-        Genera un archivo Excel con el reporte de Kardex idéntico al de la pantalla.
-        """
         try:
-            # 1. REUTILIZAR LA LÓGICA DE CÁLCULO
-            # Usamos el mismo método que alimenta la vista para asegurar consistencia
             data = self.get_kardex_report_data(id_contrato, f_ini, f_fin)
-            
-            # 2. CREAR LIBRO Y HOJA
             wb = openpyxl.Workbook()
             ws = wb.active
-            # ws.title = "Kardex Vacaciones"
-
-                        # --- LIMPIEZA DEL NOMBRE DE LA HOJA ---
-            # Quitamos caracteres prohibidos por Excel: [ ] : * ? / \
-            invalid_chars = ['[', ']', ':', '*', '?', '/', '\\']
-            clean_name = employee_name
-            for char in invalid_chars:
-                clean_name = clean_name.replace(char, '')
             
-            # Excel limita el nombre de la hoja a 31 caracteres
-            ws.title = clean_name[:30] 
+            # Usamos el helper
+            self._write_kardex_sheet(ws, data, employee_name)
             
-            # 3. ESTILOS
-            header_font = Font(bold=True, color="FFFFFF")
-            header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
-            bold_font = Font(bold=True)
-            
-            # 4. ENCABEZADOS
-            headers = ["Fecha", "Tipo Movimiento", "Detalle / Observación", "Debe (Devengado)", "Haber (Ganado)", "Saldo"]
-            ws.append(headers)
-            
-            for col_num, header in enumerate(headers, 1):
-                cell = ws.cell(row=1, column=col_num)
-                cell.font = header_font
-                cell.fill = header_fill
-
-            # 5. FILA SALDO ANTERIOR (Si aplica)
-            if data["saldo_anterior"] != 0 or f_ini:
-                ws.append([
-                    f_ini if f_ini else "---",
-                    "SALDO ANTERIOR",
-                    "Arrastre de periodo previo",
-                    "",
-                    "",
-                    data['saldo_anterior']
-                ])
-                # Poner en negrita la fila del saldo anterior
-                for cell in ws[ws.max_row]:
-                    cell.font = bold_font
-
-            # 6. MOVIMIENTOS
-            for row in data["movimientos"]:
-                ws.append([
-                    row['fecha'],
-                    row['tipo'],
-                    row['detalle'],
-                    row['debe'] if row['debe'] > 0 else "",
-                    row['haber'] if row['haber'] > 0 else "",
-                    row['saldo']
-                ])
-                
-                # Si es proyección, quizás ponerlo en cursiva (opcional)
-                if row.get('es_proyeccion'):
-                    for cell in ws[ws.max_row]:
-                        cell.font = Font(italic=True, color="555555")
-
-            # 7. TOTALES
-            tot = data["totales"]
-            ws.append([
-                "", 
-                "TOTALES", 
-                "",
-                tot['debe'],
-                tot['haber'],
-                tot['saldo_final']
-            ])
-            # Estilo fila totales
-            last_row = ws.max_row
-            for col in range(1, 7):
-                cell = ws.cell(row=last_row, column=col)
-                cell.font = bold_font
-                cell.fill = PatternFill(start_color="DCE6F1", fill_type="solid")
-
-            # 8. AJUSTAR ANCHO DE COLUMNAS
-            column_widths = [12, 25, 40, 15, 15, 15]
-            for i, width in enumerate(column_widths, 1):
-                ws.column_dimensions[get_column_letter(i)].width = width
-
-            # 9. GUARDAR
             wb.save(filepath)
             return True, "Reporte exportado correctamente."
-
         except Exception as e:
             return False, f"Error al exportar Excel: {str(e)}"
+
+    # --- MÉTODO NUEVO: Equipo ---
+    def export_team_kardex_excel(self, id_contrato_jefe, f_ini, f_fin, filepath):
+        """Genera un solo Excel con múltiples hojas para el equipo"""
+        try:
+            # 1. Obtener lista de contratos (Jefe + Equipo)
+            team_members = self.contract_dao.get_direct_reports_by_contract(id_contrato_jefe)
+            
+            if not team_members:
+                return False, "No se encontraron colaboradores dependientes de este puesto."
+
+            wb = openpyxl.Workbook()
+            # Eliminar la hoja por defecto para empezar limpio, o usarla para el primero
+            ws = wb.active
+            first_sheet_used = False
+
+            processed_count = 0
+
+            for member in team_members:
+                m_id_contrato = member[0]
+                m_nombre = member[1] # Ej: Juan Perez
+                
+                # Obtener datos
+                data = self.get_kardex_report_data(m_id_contrato, f_ini, f_fin)
+                
+                # Crear hoja
+                if not first_sheet_used:
+                    target_ws = ws
+                    first_sheet_used = True
+                else:
+                    target_ws = wb.create_sheet()
+
+                # Usar el helper para llenar la hoja
+                self._write_kardex_sheet(target_ws, data, m_nombre)
+                processed_count += 1
+
+            wb.save(filepath)
+            return True, f"Reporte de Equipo generado ({processed_count} colaboradores)."
+
+        except Exception as e:
+            return False, f"Error generando reporte de equipo: {str(e)}"
         
 
 

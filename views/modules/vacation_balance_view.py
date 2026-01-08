@@ -73,13 +73,14 @@ class VacationBalanceView(ttk.Frame):
         self.date_fin.entry.delete(0, END)
 
         # 4. Botones (Lado Derecho)
-        # Botón Exportar Excel (Nuevo)
-        ttk.Button(row2, text="Descargar Excel", command=self.export_excel, bootstyle="success-outline").pack(side=RIGHT, padx=5)
         
+        # [NUEVO] Botón Exportar Equipo
+        ttk.Button(row2, text="Descargar Equipo", command=self.export_team_excel, bootstyle="info-outline").pack(side=RIGHT, padx=5)
+
+        # [MODIFICADO] Cambiar texto para claridad
+        ttk.Button(row2, text="Descargar Individual", command=self.export_excel, bootstyle="success-outline").pack(side=RIGHT, padx=5)
         # Botón Filtrar
-        ttk.Button(row2, text="Filtrar Reporte", command=self.run_report, bootstyle="secondary").pack(side=RIGHT, padx=5)
-
-
+        ttk.Button(row2, text="Filtrar Pantalla", command=self.run_report, bootstyle="secondary").pack(side=RIGHT, padx=5)
         # --- TABLA DE RESULTADOS ---
         result_frame = ttk.Frame(self, padding=10)
         result_frame.pack(fill=BOTH, expand=True)
@@ -215,37 +216,36 @@ class VacationBalanceView(ttk.Frame):
             self.master.config(cursor="")
 
     def export_excel(self):
-        """Manejador para exportar historial filtrado"""
-        if not self.current_emp_id:
-            Messagebox.show_warning("Seleccione un colaborador primero.")
+        """Manejador para exportar reporte INDIVIDUAL de VACACIONES"""
+        # 1. Obtener ID Contrato usando el helper existente
+        id_con, f_ini, f_fin = self._get_filter_data()
+        
+        if not id_con:
+            Messagebox.show_warning("Seleccione un colaborador y contrato primero.")
             return
 
-        f_ini = self.var_filtro_ini.get()
-        f_fin = self.var_filtro_fin.get()
-        
-        # Obtener nombre limpio para el archivo
-        emp_text = self.lbl_emp_info.cget("text") # Ej: "100475 - JUAN PEREZ"
-        if "-" in emp_text:
-            safe_name = emp_text.split("-")[1].strip()
-        else:
-            safe_name = "Empleado"
+        # Nombre limpio
+        safe_name = "Kardex"
+        if "-" in self.current_emp_name:
+            safe_name = self.current_emp_name.split("-")[1].strip()
         
         safe_name = "".join([c for c in safe_name if c.isalnum() or c in (' ', '-', '_')]).strip()
-        filename = f"Inasistencias {safe_name} ({f_ini} al {f_fin}).xlsx"
+        filename = f"Kardex {safe_name}.xlsx" # Simplificado nombre
 
         filepath = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel Files", "*.xlsx")],
             initialfile=filename,
-            title="Guardar Reporte de Inasistencias"
+            title="Guardar Kardex Individual"
         )
 
         if not filepath: return
 
         self.master.config(cursor="watch")
         try:
-            success, msg = self.report_service.export_attendance_excel(
-                self.current_emp_id, f_ini, f_fin, filepath, employee_name=safe_name
+            # CORRECCIÓN: Llamamos a export_kardex_excel (Vacaciones), no attendance
+            success, msg = self.report_service.export_kardex_excel(
+                id_con, f_ini, f_fin, filepath, employee_name=safe_name
             )
             if success:
                 Messagebox.show_info(msg, "Exportación Exitosa")
@@ -258,3 +258,47 @@ class VacationBalanceView(ttk.Frame):
 
     def clear_table(self):
         for i in self.tree.get_children(): self.tree.delete(i)
+
+    def export_team_excel(self):
+        """Manejador para exportar reporte de EQUIPO (Jefatura)"""
+        id_con, f_ini, f_fin = self._get_filter_data()
+        
+        if not id_con:
+            Messagebox.show_warning("Seleccione el contrato del JEFE del equipo a descargar.")
+            return
+
+        # Nombre archivo basado en el Jefe
+        boss_name = "Jefe"
+        if "-" in self.current_emp_name:
+            boss_name = self.current_emp_name.split("-")[1].strip()
+        boss_name = "".join([c for c in boss_name if c.isalnum() or c in (' ', '-', '_')]).strip()
+        
+        filename = f"Reporte Equipo - {boss_name}.xlsx"
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel Files", "*.xlsx")],
+            initialfile=filename,
+            title="Guardar Reporte de Equipo"
+        )
+
+        if not filepath: return
+
+        self.master.config(cursor="watch")
+        self.master.update() # Forzar actualización visual del cursor
+        
+        try:
+            # Llamada al nuevo servicio
+            success, msg = self.report_service.export_team_kardex_excel(
+                id_con, f_ini, f_fin, filepath
+            )
+            
+            if success:
+                Messagebox.show_info(msg, "Exportación Exitosa")
+            else:
+                Messagebox.show_error(msg, "Error")
+                
+        except Exception as e:
+            Messagebox.show_error(f"Error crítico: {e}", "Error")
+        finally:
+            self.master.config(cursor="")
