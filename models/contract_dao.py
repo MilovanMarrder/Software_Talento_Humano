@@ -429,3 +429,31 @@ class ContractDAO:
                 print(f"❌ Error verificando vencimientos: {e}")
             finally:
                 conn.close()
+
+    def get_all_contracts_summary(self):
+            """
+            Obtiene TODOS los contratos para cargarlos en memoria del Selector.
+            Optimizado para lectura rápida (JOINs necesarios para etiquetas).
+            """
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            query = """
+            SELECT 
+                c.id_contrato, 
+                e.codigo,
+                e.nombres || ' ' || e.apellidos,
+                e.dni,
+                p.nombre_puesto,
+                tc.nombre,
+                c.fecha_inicio,
+                CASE WHEN c.activo = 1 THEN 'Activo' ELSE 'Inactivo' END
+            FROM contratos c
+            JOIN empleados e ON c.id_empleado = e.id_empleado
+            JOIN cat_puestos p ON c.id_puesto = p.id_puesto
+            JOIN cat_tipos_contrato tc ON c.id_tipo_contrato = tc.id_tipo_contrato
+            ORDER BY c.activo DESC, c.fecha_inicio DESC
+            """
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            conn.close()
+            return rows

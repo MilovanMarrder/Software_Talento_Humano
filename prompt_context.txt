@@ -1,0 +1,1555 @@
+ESTE ES EL CONTEXTO ACTUAL DEL PROYECTO RRHH HMEP.
+Stack: Python 3.13 + Tkinter (ttkbootstrap) + SQLite.
+Patrón: MVC Modular + Lógica de Negocio separada.
+
+## Estructura del Proyecto
+```
+./
+    context_prompt.py
+    main.py
+    assets/
+    config/
+        db_connection.py
+        settings.py
+        __init__.py
+    logics/
+        db_connection.py
+        payroll_import_service.py
+        perc_export_service.py
+        report_service.py
+        time_balance_service.py
+        time_calculator.py
+        vacation_service.py
+        __init__.py
+    models/
+        attendance_dao.py
+        catalogs_dao.py
+        contract_dao.py
+        employee_dao.py
+        kardex_dao.py
+        payroll_dao.py
+        __init__.py
+    views/
+        main_window.py
+        styles.py
+        __init__.py
+        components/
+            contract_selector.py
+            employee_selector.py
+        modules/
+            attendance_view.py
+            configuration_view.py
+            contracts_view.py
+            employees_view.py
+            payroll_view.py
+            reports_view.py
+            vacation_balance_view.py
+            __init__.py
+```
+
+# --- ARCHIVOS CORE (Estructura/Config) ---
+
+## Archivo: main.py
+```python
+import ttkbootstrap as ttk
+from config.db_connection import DatabaseConnection
+from views.main_window import MainWindow
+from config import settings 
+import sys
+from models.contract_dao import ContractDAO
+
+# Si es un ejecutable y NO tiene consola (noconsole), redirige los errores a un archivo
+if getattr(sys, 'frozen', False) and not sys.stdout:
+    sys.stdout = open('log_output.txt', 'w', encoding='utf-8')
+    sys.stderr = sys.stdout
+
+class App(ttk.Window):
+    def __init__(self):
+        # Configuración inicial de la ventana
+        # Themes claros recomendados: 'flatly', 'litera', 'yeti'
+        # Themes oscuros recomendados: 'darkly', 'superhero'
+        super().__init__(themename="flatly")
+        
+        
+        # Usamos las variables centralizadas están en settings dentro de config
+        self.title(settings.APP_TITLE)
+        self.geometry(settings.APP_SIZE)
+        
+        # Configuración del Icono Principal
+        if settings.ICON_PATH.exists():
+            self.iconbitmap(settings.ICON_PATH)
+        else:
+            print(f"⚠ No se encontró el icono en: {settings.ICON_PATH}")
+
+
+        # 1. Validar Base de Datos al inicio
+        self.db = DatabaseConnection()
+        if not self.db.test_connection():
+            print("⚠ ADVERTENCIA: No se pudo conectar a la base de datos.")
+            # Aquí podrías lanzar un popup de error antes de cerrar
+
+                # -----------------------------------------------------------
+        # 2. MANTENIMIENTO AUTOMÁTICO AL INICIO (NUEVO)
+        # -----------------------------------------------------------
+        try:
+            dao = ContractDAO()
+            dao.check_expired_contracts()
+        except Exception as e:
+            print(f"Advertencia: No se pudo verificar contratos vencidos: {e}")
+        
+        # 2. Inicializar Vista Principal
+        # Pasamos 'self' como controller temporalmente
+        self.main_window = MainWindow(self, controller=self)
+        
+    def run(self):
+        self.mainloop()
+
+if __name__ == "__main__":
+    app = App()
+    app.run()
+```
+
+## Archivo: config/settings.py
+```python
+import os
+import sys
+from pathlib import Path
+
+# --- GESTIÓN DE RUTAS HÍBRIDA (DEV vs EXE) ---
+if getattr(sys, 'frozen', False):
+    # Si estamos ejecutando como .exe (PyInstaller)
+    # BASE_DIR será la carpeta donde está el .exe (no la temporal interna)
+    BASE_DIR = Path(sys.executable).parent
+else:
+    # Si estamos en desarrollo (Python normal)
+    BASE_DIR = Path(__file__).resolve().parent.parent
+
+# --- RUTAS DE RECURSOS ---
+ASSETS_DIR = BASE_DIR / "assets"
+
+# Nombre de base de datos
+DB_NAME = "rrhh.db"
+
+# Ruta de base de datos (Siempre al lado del ejecutable)
+DB_PATH = BASE_DIR / DB_NAME
+
+# Ruta del Icono
+ICON_PATH = ASSETS_DIR / "blowfish_icon.ico"
+
+# Constantes de la App
+APP_TITLE = "Sistema de Talento Humano HMEP"
+APP_SIZE = "1250x620"
+
+print("="*30)
+print(f"Ruta Base detectada: {BASE_DIR}")
+print(f"Buscando DB en:      {DB_PATH}")
+print(f"¿Existe el archivo?: {DB_PATH.exists()}")
+print("="*30)
+```
+
+# --- ARCHIVOS DE TRABAJO ACTUAL (Foco) ---
+
+## Archivo: models/contract_dao.py
+```python
+import sqlite3
+from config.db_connection import DatabaseConnection
+from logics.vacation_service import VacationService
+from datetime import datetime
+
+class ContractDAO:
+    def __init__(self):
+        self.db = DatabaseConnection()
+
+    # Añadir este método helper dentro de la clase ContractDAO
+    def _sync_initial_balance_kardex(self, cursor, id_contrato, fecha_kardex, dias_iniciales):
+        """Inserta o actualiza el registro de SALDO_INICIAL en el Kardex"""
+        # 1. Verificar si ya existe un saldo inicial
+        cursor.execute("""
+            SELECT id_movimiento FROM kardex_vacaciones 
+            WHERE id_contrato = ? AND tipo_movimiento = 'SALDO_INICIAL'
+        """, (id_contrato,))
+        row = cursor.fetchone()
+
+        obs = f"Saldo Inicial al corte {fecha_kardex}"
+        
+        if row:
+            # Actualizar existente
+            cursor.execute("""
+                UPDATE kardex_vacaciones 
+                SET dias = ?, fecha_movimiento = ?, observacion = ?
+                WHERE id_movimiento = ?
+            """, (dias_iniciales, fecha_kardex, obs, row[0]))
+        else:
+            # Insertar nuevo
+            if dias_iniciales > 0: # Solo si hay saldo
+                cursor.execute("""
+                    INSERT INTO kardex_vacaciones (id_contrato, fecha_movimiento, tipo_movimiento, dias, observacion)
+                    VALUES (?, ?, 'SALDO_INICIAL', ?, ?)
+                """, (id_contrato, fecha_kardex, dias_iniciales, obs))
+
+# --- MÉTODO HELPER INTERNO ---
+    def _calculate_dni_perc(self, cursor, id_empleado, id_tipo_contrato):
+        """
+        Calcula el DNI PERC basado en la regla de negocio:
+        - HMEP -> DNI Limpio
+        - OTROS -> DNI + Primera Letra del Tipo Contrato
+        """
+        # 1. Obtener DNI del empleado
+        cursor.execute("SELECT dni FROM empleados WHERE id_empleado = ?", (id_empleado,))
+        row_emp = cursor.fetchone()
+        dni = row_emp[0] if row_emp else ""
+        
+        # 2. Obtener Nombre del Tipo de Contrato
+        cursor.execute("SELECT nombre FROM cat_tipos_contrato WHERE id_tipo_contrato = ?", (id_tipo_contrato,))
+        row_tipo = cursor.fetchone()
+        nombre_tipo = row_tipo[0] if row_tipo else ""
+        
+        # 3. Aplicar Lógica
+        nombre_upper = nombre_tipo.upper().strip()
+        if "HMEP" in nombre_upper:
+            return dni
+        else:
+            suffix = nombre_upper[0] if nombre_upper else "X"
+            return f"{dni}{suffix}"
+
+
+
+    def create_contract(self, data_contrato, lista_costos):
+        # Abrimos la conexión principal
+        conn = self.db.get_connection()
+        id_contrato = None
+        
+        try:
+            cursor = conn.cursor()
+            
+            # 1. DESEMPAQUETADO
+            (id_emp, id_puesto, id_depto, id_tipo, id_jornada, 
+            f_kardex, s_inicial, f_ini, f_fin, salario) = data_contrato
+
+            # -----------------------------------------------------------
+            # VALIDACIÓN CORREGIDA: Concurrencia por Tipo
+            # -----------------------------------------------------------
+            # Verificamos si ya existe un contrato ACTIVO para este empleado
+            # PERO SOLO SI ES DEL MISMO TIPO.
+            cursor.execute("""
+                SELECT id_contrato, fecha_inicio 
+                FROM contratos 
+                WHERE id_empleado = ? 
+                  AND id_tipo_contrato = ? 
+                  AND activo = 1
+            """, (id_emp, id_tipo))
+            
+            active_contract = cursor.fetchone()
+            
+            if active_contract:
+                conn.close()
+                # Recuperamos el nombre del tipo para un mensaje más claro
+                cursor = self.db.get_connection().cursor() # Reabrimos cursors simples si es necesario o usamos lógica previa
+                # (Para simplificar el ejemplo, mostramos el error genérico)
+                return False, f"El empleado ya tiene un contrato activo de este mismo Tipo (Iniciado el {active_contract[1]}).\nDebe finalizar el contrato actual de esta categoría antes de abrir uno nuevo."
+            
+            # Opcional: Validación de solapamiento de fechas incluso si el anterior está inactivo
+            # (Para evitar que crees un contrato histórico que choque con fechas de otro del mismo tipo)
+            cursor.execute("""
+                SELECT MAX(fecha_fin) 
+                FROM contratos 
+                WHERE id_empleado = ? 
+                  AND id_tipo_contrato = ?
+                  AND activo = 0
+            """, (id_emp, id_tipo))
+            
+            row_last = cursor.fetchone()
+            last_end_date = row_last[0] if row_last else None
+            
+            if last_end_date and f_ini <= last_end_date:
+                conn.close()
+                return False, f"Conflicto de fechas: El nuevo contrato inicia ({f_ini}) antes de que termine el último contrato de este tipo ({last_end_date})."
+            # -----------------------------------------------------------
+
+            # 2. CÁLCULO DE DNI PERC (Regla de negocio automática)
+            dni_perc = self._calculate_dni_perc(cursor, id_emp, id_tipo)
+
+            # 3. INSERT DEL CONTRATO
+            query = """
+                INSERT INTO contratos 
+                (id_empleado, id_puesto, id_departamento, id_tipo_contrato, id_jornada, 
+                fecha_inicio_kardex, saldo_inicial_vacaciones,
+                fecha_inicio, fecha_fin, salario, dni_perc, activo)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            """
+            cursor.execute(query, (id_emp, id_puesto, id_depto, id_tipo, id_jornada, 
+                                f_kardex, s_inicial, f_ini, f_fin, salario, dni_perc))
+            
+            id_contrato = cursor.lastrowid # Capturamos el ID de inmediato
+
+            # 4. INSERT DE DISTRIBUCIÓN DE COSTOS
+            for uid, pct in lista_costos:
+                cursor.execute("""
+                    INSERT INTO distribucion_costos (id_contrato, id_unidad, porcentaje) 
+                    VALUES (?, ?, ?)
+                """, (id_contrato, uid, pct))
+            
+            # 5. SINCRONIZACIÓN DE SALDO INICIAL EN KARDEX (Si hay fecha)
+            if f_kardex:
+                self._sync_initial_balance_kardex(cursor, id_contrato, f_kardex, s_inicial)
+
+            # 6. CIERRE DE TRANSACCIÓN ATÓMICA
+            # Guardamos todo lo anterior (Contrato + Costos + Saldo Inicial)
+            conn.commit() 
+            conn.close() # Cerramos conexión A para liberar el bloqueo de escritura de SQLite
+
+            # 7. LÓGICA PROACTIVA POST-CIERRE
+            # Disparamos el cálculo de meses acumulados. 
+            # Al estar fuera de la conexión anterior, el Service puede abrir la suya propia sin bloqueos.
+            try:
+                vac_service = VacationService()
+                vac_service.process_monthly_accruals(id_contrato)
+                msg_exito = "Contrato creado y saldos proyectados correctamente."
+            except Exception as e_acc:
+                msg_exito = f"Contrato creado, pero hubo un detalle calculando los meses: {e_acc}"
+
+            return True, msg_exito
+
+        except Exception as e:
+            # Si algo falla antes del commit, limpiamos todo (Atomicidad)
+            if conn:
+                conn.rollback()
+                conn.close()
+            print(f"DEBUG: Error al crear contrato: {e}")
+            return False, f"No se pudo crear el contrato: {e}"
+
+    def update_contract(self, id_contrato, data_contrato, lista_costos):
+            conn = self.db.get_connection()
+            operation_success = False
+            error_msg = ""
+            
+            try:
+                cursor = conn.cursor()
+                
+                # Data recibida desde la vista
+                (id_puesto, id_depto, id_tipo, id_jornada, 
+                f_kardex, s_inicial, 
+                f_ini, f_fin, salario, _id_con_param) = data_contrato
+                
+                # 1. RECUPERAR DATOS CLAVE
+                cursor.execute("SELECT id_empleado FROM contratos WHERE id_contrato = ?", (id_contrato,))
+                row_emp = cursor.fetchone()
+                if not row_emp: raise Exception("Contrato no encontrado")
+                id_emp = row_emp[0]
+
+                # 2. RECALCULAR DNI PERC (Por si cambió el tipo de contrato)
+                dni_perc = self._calculate_dni_perc(cursor, id_emp, id_tipo)
+
+                # ---------------------------------------------------------
+                # 3. LÓGICA DE ESTADO AUTOMÁTICO (NUEVO)
+                # ---------------------------------------------------------
+                # Por defecto asumimos que sigue activo
+                nuevo_estado = 1 
+                
+                if f_fin:
+                    # Obtenemos fecha de hoy (YYYY-MM-DD)
+                    hoy = datetime.now().strftime('%Y-%m-%d')
+                    
+                    # Si la fecha fin es menor a hoy, SE DESACTIVA
+                    if f_fin < hoy:
+                        nuevo_estado = 0
+                    
+                    # Validación de coherencia
+                    if f_fin < f_ini:
+                        raise Exception("La fecha fin no puede ser anterior a la fecha de inicio.")
+                # ---------------------------------------------------------
+
+                # 4. UPDATE (Agregamos la columna 'activo' al query)
+                query = """
+                    UPDATE contratos 
+                    SET id_puesto=?, id_departamento=?, id_tipo_contrato=?, id_jornada=?,
+                        fecha_inicio_kardex=?, saldo_inicial_vacaciones=?,
+                        fecha_inicio=?, fecha_fin=?, salario=?,
+                        dni_perc=?,
+                        activo=?  -- <--- Actualizamos estado explícitamente
+                    WHERE id_contrato=?
+                """
+                cursor.execute(query, (id_puesto, id_depto, id_tipo, id_jornada, f_kardex, s_inicial, 
+                                    f_ini, f_fin, salario, dni_perc, 
+                                    nuevo_estado, # <--- Pasamos el valor calculado
+                                    id_contrato))
+                
+                # 5. ACTUALIZAR COSTOS (Igual que antes)
+                cursor.execute("DELETE FROM distribucion_costos WHERE id_contrato=?", (id_contrato,))
+                for uid, pct in lista_costos:
+                    cursor.execute("INSERT INTO distribucion_costos (id_contrato, id_unidad, porcentaje) VALUES (?, ?, ?)", (id_contrato, uid, pct))
+
+                # 6. KARDEX (Igual que antes)
+                if f_kardex:
+                    self._sync_initial_balance_kardex(cursor, id_contrato, f_kardex, s_inicial)
+
+                conn.commit()
+                operation_success = True 
+                
+            except sqlite3.IntegrityError as e:
+                # Si salta error aquí, es porque NO has ejecutado el script de migración todavía
+                conn.rollback()
+                operation_success = False
+                error_msg = f"Error de integridad (¿Ya ejecutaste la migración del UNIQUE?): {e}"
+            except Exception as e:
+                conn.rollback()
+                operation_success = False
+                error_msg = str(e)
+            finally:
+                conn.close()
+
+            # Post-Cierre
+            if operation_success:
+                try:
+                    vac_service = VacationService()
+                    vac_service.process_monthly_accruals(id_contrato)
+                    return True, "Contrato actualizado correctamente."
+                except Exception as e_acc:
+                    print(f"Advertencia recálculo: {e_acc}")
+                    return True, "Contrato actualizado (Advertencia: Revise Kardex)."
+            else:
+                return False, error_msg
+
+
+
+    def delete_contract(self, id_contrato):
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            # Gracias al ON DELETE CASCADE, esto borrará automáticamente:
+            # - Filas en distribucion_costos
+            # - Filas en kardex_vacaciones
+            # - Filas en inasistencias
+            cursor.execute("DELETE FROM contratos WHERE id_contrato = ?", (id_contrato,))
+            
+            conn.commit()
+            return True, "Contrato y todos sus registros vinculados eliminados correctamente."
+        except Exception as e:
+            conn.rollback()
+            return False, f"Error al eliminar: {e}"
+        finally:
+            conn.close()
+            
+    def get_employee_by_code(self, codigo):
+        """Busca ID y Nombre de empleado por su código"""
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id_empleado, nombres, apellidos FROM empleados WHERE codigo = ? AND activo = 1", (codigo,))
+        row = cursor.fetchone()
+        conn.close()
+        return row
+    
+
+
+    def get_all_contracts(self):
+        """Obtiene lista resumen para la tabla inferior"""
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        query = """
+        SELECT 
+            c.id_contrato, 
+            e.codigo || ' - ' || e.nombres || ' ' || e.apellidos,
+            p.nombre_puesto,
+            tc.nombre,
+            c.fecha_inicio
+        FROM contratos c
+        JOIN empleados e ON c.id_empleado = e.id_empleado
+        JOIN cat_puestos p ON c.id_puesto = p.id_puesto
+        JOIN cat_tipos_contrato tc ON c.id_tipo_contrato = tc.id_tipo_contrato
+        WHERE c.activo = 1
+        ORDER BY c.id_contrato DESC
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    def get_contract_details(self, id_contrato):
+            """
+            Recupera toda la info de un contrato y sus costos para editar.
+            CORRECCIÓN: Usamos columnas explícitas para evitar errores de índices si cambia la BD.
+            """
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            
+            # 1. Datos Contrato (ORDEN EXPLÍCITO)
+            # 0: id_contrato
+            # 1: id_empleado
+            # 2: id_puesto
+            # 3: id_departamento
+            # 4: id_tipo_contrato
+            # 5: id_jornada
+            # 6: fecha_inicio
+            # 7: fecha_fin
+            # 8: salario
+            # 9: fecha_inicio_kardex
+            # 10: saldo_inicial_vacaciones
+            query = """
+                SELECT 
+                    id_contrato, id_empleado, id_puesto, id_departamento, 
+                    id_tipo_contrato, id_jornada, fecha_inicio, fecha_fin, 
+                    salario, fecha_inicio_kardex, saldo_inicial_vacaciones
+                FROM contratos 
+                WHERE id_contrato = ?
+            """
+            cursor.execute(query, (id_contrato,))
+            contrato = cursor.fetchone()
+            
+            # 2. Datos Empleado (Para mostrar el nombre en el label)
+            cursor.execute("""
+                SELECT e.id_empleado, e.codigo, e.nombres, e.apellidos 
+                FROM empleados e 
+                JOIN contratos c ON e.id_empleado = c.id_empleado 
+                WHERE c.id_contrato = ?
+            """, (id_contrato,))
+            empleado = cursor.fetchone()
+            
+            # 3. Distribución Costos
+            cursor.execute("""
+                SELECT dc.id_unidad, up.nombre_up, dc.porcentaje
+                FROM distribucion_costos dc
+                JOIN cat_unidades_produccion up ON dc.id_unidad = up.id_unidad
+                WHERE dc.id_contrato = ?
+            """, (id_contrato,))
+            costos = cursor.fetchall()
+            
+            conn.close()
+            return contrato, empleado, costos
+    
+# ... (métodos anteriores)
+
+    def search_contracts(self, term):
+        """
+        Busca contratos por Nombre de Empleado, Código, DNI o Puesto.
+        Optimizado para el Selector.
+        """
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        search_term = f"%{term}%"
+        
+        query = """
+        SELECT 
+            c.id_contrato, 
+            e.codigo || ' - ' || e.nombres || ' ' || e.apellidos as empleado,
+            p.nombre_puesto,
+            tc.nombre as tipo,
+            c.fecha_inicio,
+            CASE WHEN c.activo = 1 THEN 'Activo' ELSE 'Inactivo' END as estado
+        FROM contratos c
+        JOIN empleados e ON c.id_empleado = e.id_empleado
+        JOIN cat_puestos p ON c.id_puesto = p.id_puesto
+        JOIN cat_tipos_contrato tc ON c.id_tipo_contrato = tc.id_tipo_contrato
+        WHERE 
+            e.nombres LIKE ? OR 
+            e.apellidos LIKE ? OR 
+            e.codigo LIKE ? OR 
+            e.dni LIKE ? OR
+            p.nombre_puesto LIKE ?
+        ORDER BY c.activo DESC, c.fecha_inicio DESC
+        LIMIT 50 -- Límite de seguridad para no saturar UI
+        """
+        # Repetimos el término para cada ?
+        params = (search_term, search_term, search_term, search_term, search_term)
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+
+    def check_expired_contracts(self):
+            """
+            Método de mantenimiento: Busca contratos activos cuya fecha fin 
+            sea anterior a hoy y los desactiva automáticamente.
+            """
+            conn = self.db.get_connection()
+            count = 0
+            try:
+                cursor = conn.cursor()
+                hoy = datetime.now().strftime('%Y-%m-%d')
+                
+                # Query mágica
+                query = """
+                    UPDATE contratos 
+                    SET activo = 0 
+                    WHERE activo = 1 
+                    AND fecha_fin IS NOT NULL 
+                    AND fecha_fin < ?
+                """
+                cursor.execute(query, (hoy,))
+                count = cursor.rowcount
+                conn.commit()
+                if count > 0:
+                    print(f"🧹 Mantenimiento: Se desactivaron {count} contratos vencidos.")
+            except Exception as e:
+                print(f"❌ Error verificando vencimientos: {e}")
+            finally:
+                conn.close()
+```
+
+## Archivo: models/employee_dao.py
+```python
+import sqlite3
+from config.db_connection import DatabaseConnection
+import re
+
+class EmployeeDAO:
+    def __init__(self):
+        self.db = DatabaseConnection()
+
+    def insert(self, codigo, dni, nombres, apellidos, fecha_nac, activo=1):
+            conn = self.db.get_connection()
+            try:
+                # 1. SANITIZACIÓN (Limpieza de datos)
+                # Convertimos cadenas vacías "" a None (NULL en SQL)
+                # Esto es vital porque para SQLite "" es un valor y puede duplicarse, 
+                # pero si tu restricción UNIQUE choca, mejor manejarlo como NULL.
+                # dni_final = dni.strip() if dni and dni.strip() else None
+                dni_limpio = re.sub(r'\D', '', dni) if dni else None
+                codigo_final = codigo.strip()
+                
+                # 2. INTENTO DE GUARDADO
+                query = """
+                    INSERT INTO empleados (codigo, dni, nombres, apellidos, fecha_nacimiento, activo)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """
+                cursor = conn.cursor()
+                cursor.execute(query, (codigo_final, dni_limpio, nombres, apellidos, fecha_nac, activo))
+                conn.commit()
+                
+                # Si llegamos aquí, se guardó.
+                print(f"DEBUG: Empleado {codigo_final} guardado exitosamente en BD.")
+                return True, "Empleado guardado exitosamente."
+                
+            except sqlite3.IntegrityError as e:
+                # Esto solo salta si NO se pudo guardar
+                err_msg = str(e)
+                print(f"DEBUG SQL ERROR: {err_msg}")
+                
+                if "UNIQUE constraint failed" in err_msg:
+                    if "empleados.codigo" in err_msg:
+                        return False, f"El Código '{codigo}' ya existe."
+                    elif "empleados.dni" in err_msg:
+                        return False, f"El DNI '{dni}' ya existe."
+                    return False, "El registro ya existe (Código o DNI duplicado)."
+                
+                return False, f"Error de integridad: {err_msg}"
+                
+            except Exception as e:
+                print(f"DEBUG EXCEPTION: {e}")
+                return False, f"Error desconocido: {e}"
+            finally:
+                conn.close()
+
+    def update(self, id_empleado, codigo, dni, nombres, apellidos, fecha_nac):
+        """Actualiza un registro existente"""
+        conn = self.db.get_connection()
+        try:
+            query = """
+                UPDATE empleados 
+                SET codigo=?, dni=?, nombres=?, apellidos=?, fecha_nacimiento=?
+                WHERE id_empleado=?
+            """
+            cursor = conn.cursor()
+            cursor.execute(query, (codigo, dni, nombres, apellidos, fecha_nac, id_empleado))
+            conn.commit()
+            return True, "Empleado actualizado correctamente."
+        except sqlite3.IntegrityError:
+            return False, "No se puede actualizar: El Código o DNI pertenecen a otro empleado."
+        except Exception as e:
+            return False, f"Error al actualizar: {e}"
+        finally:
+            conn.close()
+
+    def get_all(self):
+
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id_empleado, codigo, dni, nombres, apellidos, fecha_nacimiento FROM empleados WHERE activo = 1")
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    
+    
+    def delete_employee(self, employee_id):
+            """
+            Elimina un empleado SOLO si no tiene contratos vinculados.
+            Retorna: (True/False, Mensaje)
+            """
+            conn = self.db.get_connection()
+            try:
+                cursor = conn.cursor()
+                
+                # 1. VERIFICACIÓN DE SEGURIDAD
+                # Contamos si tiene contratos (activos o inactivos)
+                cursor.execute("SELECT COUNT(*) FROM contratos WHERE id_empleado = ?", (employee_id,))
+                count = cursor.fetchone()[0]
+                
+                if count > 0:
+                    return False, f"No se puede eliminar: El empleado tiene {count} contrato(s) registrado(s). Debe eliminar los contratos primero o marcarlo como inactivo."
+
+                # 2. EJECUTAR BORRADO
+                cursor.execute("DELETE FROM empleados WHERE id_empleado = ?", (employee_id,))
+                
+                if cursor.rowcount > 0:
+                    conn.commit()
+                    return True, "Empleado eliminado correctamente del sistema."
+                else:
+                    return False, "No se encontró el empleado con ese ID."
+                    
+            except Exception as e:
+                conn.rollback()
+                return False, f"Error de base de datos: {str(e)}"
+            finally:
+                conn.close()
+```
+
+## Archivo: views/components/employee_selector.py
+```python
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+from models.employee_dao import EmployeeDAO
+
+class EmployeeSelector(ttk.Toplevel):
+    def __init__(self, parent, callback):
+        super().__init__(parent)
+        self.title("Buscar Colaborador")
+        self.geometry("600x400")
+        self.callback = callback # Función a ejecutar al seleccionar
+        self.dao = EmployeeDAO()
+        
+        self._setup_ui()
+        self._load_data()
+
+    def _setup_ui(self):
+        # Barra de búsqueda
+        search_frame = ttk.Frame(self, padding=10)
+        search_frame.pack(fill=X)
+        
+        ttk.Label(search_frame, text="Filtrar:").pack(side=LEFT)
+        self.var_search = ttk.StringVar()
+        self.var_search.trace("w", self._filter_data) # Filtrado en tiempo real
+        entry = ttk.Entry(search_frame, textvariable=self.var_search)
+        entry.pack(side=LEFT, fill=X, expand=True, padx=5)
+        entry.focus() # Poner cursor aquí automáticamente
+
+        # Tabla
+        cols = ("id", "codigo", "nombre", "dni")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", bootstyle="primary")
+        self.tree.heading("id", text="ID")
+        self.tree.heading("codigo", text="Código")
+        self.tree.heading("nombre", text="Nombre Completo")
+        self.tree.heading("dni", text="DNI")
+        
+        self.tree.column("id", width=0, stretch=False) # Oculto
+        self.tree.column("codigo", width=80)
+        self.tree.column("dni", width=100)
+        self.tree.column("nombre", width=250)
+        
+        self.tree.pack(fill=BOTH, expand=True, padx=10, pady=5)
+        
+        # Doble clic selecciona
+        self.tree.bind("<Double-1>", self._on_select)
+        
+        ttk.Button(self, text="Seleccionar", command=self._on_select, bootstyle="success").pack(pady=10)
+
+    def _load_data(self):
+        # Traemos todos los empleados (optimización: si son miles, limitar query)
+        self.all_data = self.dao.get_all() 
+        # get_all retorna tuplas: (id, codigo, dni, nombres, apellidos, nac)
+        # Procesamos para tener "Nombre Completo"
+        self.processed_data = []
+        for r in self.all_data:
+            nombre_completo = f"{r[3]} {r[4]}"
+            self.processed_data.append((r[0], r[1], nombre_completo, r[2]))
+            
+        self._populate_tree(self.processed_data)
+
+    def _populate_tree(self, data):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for row in data:
+            self.tree.insert("", END, values=row)
+
+    def _filter_data(self, *args):
+        query = self.var_search.get().lower()
+        filtered = [
+            row for row in self.processed_data 
+            if query in row[1].lower() or query in row[2].lower() or query in row[3].lower()
+        ]
+        self._populate_tree(filtered)
+
+    def _on_select(self, event=None):
+        selected = self.tree.focus()
+        if selected:
+            values = self.tree.item(selected, 'values')
+            # Retornamos ID, Código y Nombre a la ventana padre
+            self.callback(values[0], values[1], values[2]) 
+            self.destroy()
+```
+
+## Archivo: views/components/contract_selector.py
+```python
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+from models.contract_dao import ContractDAO
+
+class ContractSelector(ttk.Toplevel):
+    def __init__(self, parent, callback):
+        super().__init__(parent)
+        self.title("Búsqueda de Contrato")
+        self.geometry("800x500")
+        self.callback = callback # Función a ejecutar al seleccionar (id_contrato)
+        self.dao = ContractDAO()
+        
+        self._setup_ui()
+        # Cargar inicial (opcional, o dejar vacío)
+        self.search()
+
+    def _setup_ui(self):
+        # --- Barra de Búsqueda ---
+        search_frame = ttk.Frame(self, padding=10)
+        search_frame.pack(fill=X)
+        
+        ttk.Label(search_frame, text="Buscar (Nombre, DNI, Puesto):").pack(side=LEFT, padx=5)
+        self.entry_search = ttk.Entry(search_frame, width=40)
+        self.entry_search.pack(side=LEFT, padx=5, fill=X, expand=True)
+        self.entry_search.bind("<Return>", lambda e: self.search())
+        
+        ttk.Button(search_frame, text="🔍 Buscar", command=self.search, bootstyle="primary").pack(side=LEFT, padx=5)
+
+        # --- Tabla Resultados ---
+        columns = ("id", "empleado", "puesto", "tipo", "inicio", "estado")
+        self.tree = ttk.Treeview(self, columns=columns, show="headings", bootstyle="info")
+        
+        self.tree.heading("id", text="ID")
+        self.tree.column("id", width=40, stretch=False)
+        
+        self.tree.heading("empleado", text="Colaborador")
+        self.tree.column("empleado", width=250)
+        
+        self.tree.heading("puesto", text="Puesto")
+        self.tree.column("puesto", width=150)
+
+        self.tree.heading("tipo", text="Modalidad")
+        self.tree.column("tipo", width=100)
+        
+        self.tree.heading("inicio", text="Fecha Inicio")
+        self.tree.column("inicio", width=90)
+        
+        self.tree.heading("estado", text="Estado")
+        self.tree.column("estado", width=70)
+        
+        self.tree.pack(fill=BOTH, expand=True, padx=10, pady=10)
+        
+        # Doble clic selecciona
+        self.tree.bind("<Double-1>", self.on_double_click)
+        
+        ttk.Button(self, text="Cancelar", command=self.destroy, bootstyle="secondary-outline").pack(pady=5)
+
+    def search(self):
+        term = self.entry_search.get().strip()
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+            
+        rows = self.dao.search_contracts(term)
+        for r in rows:
+            # r = (id, emp, puesto, tipo, inicio, estado)
+            self.tree.insert("", END, values=r)
+
+    def on_double_click(self, event):
+        selection = self.tree.selection()
+        if not selection: return
+        
+        item = self.tree.item(selection[0])
+        id_contrato = item['values'][0]
+        
+        if self.callback:
+            self.callback(id_contrato)
+            
+        self.destroy()
+```
+
+## Archivo: views/modules/contracts_view.py
+```python
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+from ttkbootstrap.dialogs import Messagebox, MessageDialog 
+from views.components.employee_selector import EmployeeSelector
+from models.contract_dao import ContractDAO
+from models.catalogs_dao import CatalogsDAO
+from views.components.contract_selector import ContractSelector 
+
+class ContractsView(ttk.Frame):
+    def __init__(self, parent, controller=None):
+        super().__init__(parent)
+        self.controller = controller
+        self.dao = ContractDAO()
+        self.cat_dao = CatalogsDAO()
+        
+        self.selected_contract_id = None # Control de Estado (None=Crear, ID=Editar)
+        self.current_employee_id = None
+        self.cost_distribution_list = [] # Lista de tuplas (id_unidad, pct)
+        self.var_indefinido = ttk.BooleanVar(value=True) 
+        self.pack(fill=BOTH, expand=True)
+        self._create_ui()
+        self._load_catalogs()
+        #self._load_contract_list() # se comenta porqué ahora será una busqueda con el componente
+        self.toggle_fecha_fin()
+
+    def _create_ui(self):
+        # Crear un Canvas con Scroll si la pantalla es pequeña, 
+        # pero para simplificar usaremos pack directo asumiendo resolución HD.
+        
+        main_content = ttk.Frame(self)
+        main_content.pack(fill=BOTH, expand=True)
+
+        # --- PARTE A: BUSCADOR ---
+        search_frame = ttk.Labelframe(main_content, text="1. Colaborador", padding=10, bootstyle="info")
+        search_frame.pack(fill=X, padx=10, pady=5)
+        
+        self.btn_search = ttk.Button(search_frame, text="🔍 Buscar Empleado", command=self.open_search_modal, bootstyle="info")
+        self.btn_search.pack(side=LEFT, padx=5)
+        
+        self.lbl_employee_name = ttk.Label(search_frame, text="Seleccione un colaborador...", font=("Segoe UI", 11, "bold"))
+        self.lbl_employee_name.pack(side=LEFT, padx=20)
+
+        # --- PARTE B: DATOS CONTRATO ---
+        details_frame = ttk.Labelframe(main_content, text="2. Datos Contractuales", padding=10, bootstyle="primary")
+        details_frame.pack(fill=X, padx=10, pady=5)
+        
+        # Fila 0
+        ttk.Label(details_frame, text="Puesto:").grid(row=0, column=0, padx=5, pady=5, sticky=E)
+        self.cb_puesto = ttk.Combobox(details_frame, state="readonly", width=35)
+        self.cb_puesto.grid(row=0, column=1, padx=5, pady=5)
+        
+        ttk.Label(details_frame, text="Departamento:").grid(row=0, column=2, padx=5, pady=5, sticky=E)
+        self.cb_depto = ttk.Combobox(details_frame, state="readonly", width=35)
+        self.cb_depto.grid(row=0, column=3, padx=5, pady=5)
+        
+
+        # Fila 1: Modalidad y Jornada (Agrupamos lo legal)
+        ttk.Label(details_frame, text="Tipo Contrato:").grid(row=1, column=0, padx=5, pady=5, sticky=E)
+        self.cb_tipo = ttk.Combobox(details_frame, state="readonly", width=35)
+        self.cb_tipo.grid(row=1, column=1, padx=5, pady=5)
+        
+        ttk.Label(details_frame, text="Jornada:").grid(row=1, column=2, padx=5, pady=5, sticky=E)
+        self.cb_jornada = ttk.Combobox(details_frame, state="readonly", width=35) # <--- NUEVO
+        self.cb_jornada.grid(row=1, column=3, padx=5, pady=5)
+        
+        # Fila 2: Aspecto Económico
+        ttk.Label(details_frame, text="Salario Base:").grid(row=2, column=0, padx=5, pady=5, sticky=E)
+        self.entry_salario = ttk.Entry(details_frame, width=35)
+        self.entry_salario.grid(row=2, column=1, padx=5, pady=5)
+
+        # ... (Fila de Salario) ...
+        
+        # Fila Nueva: Configuración Vacaciones
+        ttk.Label(details_frame, text="Inicio Contab. Vacaciones:", bootstyle="inverse-primary").grid(row=3, column=0, padx=5, pady=5, sticky=E)
+        self.date_kardex = ttk.DateEntry(details_frame, dateformat='%Y-%m-%d')
+        self.date_kardex.grid(row=3, column=1, padx=5, pady=5, sticky=W)
+        
+        ttk.Label(details_frame, text="Saldo Inicial (Días):", bootstyle="inverse-primary").grid(row=3, column=2, padx=5, pady=5, sticky=E)
+        self.entry_saldo_ini = ttk.Entry(details_frame, width=10)
+        self.entry_saldo_ini.insert(0, "0")
+        self.entry_saldo_ini.grid(row=3, column=3, padx=5, pady=5, sticky=W)
+
+        # Fila 4: Fechas contrato (Bajamos las fechas originales)
+        # ... (Ajusta el row=4 en date_inicio, date_fin y check indefinido) ...
+        
+        # Fila 3: Tiempos (Bajamos esto para dar aire)
+        ttk.Label(details_frame, text="Fecha Inicio:").grid(row=4, column=0, padx=5, pady=5, sticky=E)
+        self.date_inicio = ttk.DateEntry(details_frame, dateformat='%Y-%m-%d')
+        self.date_inicio.grid(row=4, column=1, padx=5, pady=5, sticky=W)
+        
+        ttk.Label(details_frame, text="Fecha Fin:").grid(row=4, column=2, padx=5, pady=5, sticky=E)
+        self.date_fin = ttk.DateEntry(details_frame, dateformat='%Y-%m-%d', startdate=None)
+        self.date_fin.grid(row=4, column=3, padx=5, pady=5, sticky=W)
+        
+        self.var_indefinido = ttk.BooleanVar(value=True)
+        ttk.Checkbutton(details_frame, text="Indefinido", variable=self.var_indefinido, command=self.toggle_fecha_fin).grid(row=4, column=4, padx=5)
+        # --- PARTE C: COSTOS ---
+        cost_frame = ttk.Labelframe(main_content, text="3. Distribución de Unidades de Producción", padding=10, bootstyle="warning")
+        cost_frame.pack(fill=X, padx=10, pady=5)
+        
+        c_controls = ttk.Frame(cost_frame)
+        c_controls.pack(fill=X, pady=5)
+        
+        self.cb_unidad = ttk.Combobox(c_controls, state="readonly", width=40)
+        self.cb_unidad.pack(side=LEFT, padx=5)
+        
+        ttk.Label(c_controls, text="%:").pack(side=LEFT)
+        self.entry_pct = ttk.Entry(c_controls, width=8)
+        self.entry_pct.insert(0, "100")
+        self.entry_pct.pack(side=LEFT, padx=5)
+        
+        ttk.Button(c_controls, text="+ Agregar", command=self.add_cost_line, bootstyle="secondary-outline").pack(side=LEFT, padx=5)
+        # BOTÓN NUEVO: Eliminar Línea
+        ttk.Button(c_controls, text="x Quitar Selecc.", command=self.remove_cost_line, bootstyle="danger-outline").pack(side=LEFT, padx=5)
+
+        # Treeview pequeña para costos
+        self.tree_costos = ttk.Treeview(cost_frame, columns=("id", "nombre", "pct"), show="headings", height=3)
+        self.tree_costos.heading("nombre", text="Unidad / Fuente")
+        self.tree_costos.heading("pct", text="% Asignado")
+        self.tree_costos.column("id", width=0, stretch=False)
+        self.tree_costos.column("pct", width=100, anchor=CENTER)
+        self.tree_costos.pack(fill=X)
+
+        # BOTONES ACCIÓN
+        actions_frame = ttk.Frame(main_content, padding=10)
+        actions_frame.pack(fill=X)
+        
+        self.btn_save = ttk.Button(actions_frame, text="Guardar Contrato", command=self.save_contract, bootstyle="success")
+        self.btn_save.pack(side=RIGHT, padx=5)
+
+        # Botón Eliminar (Solo visible en edición)
+        self.btn_delete = ttk.Button(actions_frame, text="Eliminar Contrato", command=self.delete_current_contract, bootstyle="danger")
+        self.btn_delete.pack(side=RIGHT, padx=5)
+        self.btn_delete.hide = lambda: self.btn_delete.pack_forget()
+        self.btn_delete.show = lambda: self.btn_delete.pack(side=RIGHT, padx=5)
+        self.btn_delete.hide() # Oculto por defecto
+        
+        self.btn_cancel = ttk.Button(actions_frame, text="Cancelar Edición", command=self.clear_form, bootstyle="secondary")
+        self.btn_cancel.pack(side=RIGHT, padx=5)
+        self.btn_cancel.hide = lambda: self.btn_cancel.pack_forget()
+        self.btn_cancel.show = lambda: self.btn_cancel.pack(side=RIGHT, padx=5)
+        self.btn_cancel.hide()
+
+        # --- PARTE D: BARRA DE ACCIONES SUPERIOR O INFERIOR ---
+        # Reemplazamos el "list_frame" gigante por una barra de herramientas de gestión
+        
+        tools_frame = ttk.Frame(main_content, padding=10)
+        tools_frame.pack(fill=X, side=BOTTOM) # Lo ponemos al final
+        
+        ttk.Label(tools_frame, text="Gestión de Contratos:", font=("Segoe UI", 10, "bold")).pack(side=LEFT, padx=5)
+        
+        # BOTÓN NUEVO: BUSCAR HISTÓRICO
+        ttk.Button(
+            tools_frame, 
+            text="📂 Buscar Contrato Existente", 
+            command=self.open_contract_search, 
+            bootstyle="info-outline"
+        ).pack(side=LEFT, padx=10)
+        
+        # El botón limpiar ahora es explícito para "Nuevo"
+        ttk.Button(
+            tools_frame,
+            text="✨ Nuevo Contrato (Limpiar)",
+            command=self.clear_form,
+            bootstyle="secondary"
+        ).pack(side=LEFT)
+
+        # self.toggle_fecha_fin()
+
+    # --- LÓGICA ---
+    def _load_catalogs(self):
+        # Carga igual que antes ...
+        self.puestos_data = self.cat_dao.get_puestos()
+        self.deptos_data = self.cat_dao.get_departamentos()
+        self.tipos_data = self.cat_dao.get_tipos_contrato()
+        self.unidades_data = self.cat_dao.get_unidades_produccion()
+        self.jornadas_data = self.cat_dao.get_jornadas()
+
+        self.cb_puesto['values'] = [x[1] for x in self.puestos_data]
+        self.cb_depto['values'] = [x[1] for x in self.deptos_data]
+        self.cb_tipo['values'] = [x[1] for x in self.tipos_data]
+        self.cb_unidad['values'] = [x[1] for x in self.unidades_data]
+        self.cb_jornada['values'] = [x[1] for x in self.jornadas_data]
+
+    def open_contract_search(self):
+        # Abrir el modal y pasarle el método que maneja la selección
+        ContractSelector(self, self.on_contract_selected_from_modal)
+
+    def on_contract_selected_from_modal(self, id_contrato):
+        # Este método reemplaza al on_contract_double_click antiguo
+        self._load_contract_to_form(id_contrato)
+
+
+    def open_search_modal(self):
+        # Bloquea búsqueda si estamos editando (para no cambiar el empleado de un contrato ya hecho)
+        if self.selected_contract_id:
+            Messagebox.show_warning("No puede cambiar el empleado en modo edición. Cancele primero.")
+            return
+        EmployeeSelector(self, self.on_employee_selected)
+
+    def on_employee_selected(self, emp_id, emp_code, emp_name):
+        self.current_employee_id = emp_id
+        self.lbl_employee_name.config(text=f"{emp_code} - {emp_name}", bootstyle="success")
+
+    def toggle_fecha_fin(self):
+        state = "disabled" if self.var_indefinido.get() else "normal"
+        self.date_fin.entry.configure(state=state)
+        if state == "disabled": self.date_fin.entry.delete(0, END)
+
+    # --- LÓGICA DE COSTOS (ADD / REMOVE) ---
+    def add_cost_line(self):
+        unidad_nombre = self.cb_unidad.get()
+        try:
+            pct = float(self.entry_pct.get())
+        except ValueError: return
+
+        if not unidad_nombre: return
+        
+        # Buscar ID
+        unidad_id = next((x[0] for x in self.unidades_data if x[1] == unidad_nombre), None)
+        
+        if unidad_id:
+            # Validar que no esté duplicada
+            for u_id, _ in self.cost_distribution_list:
+                if u_id == unidad_id:
+                    Messagebox.show_warning("Esta unidad ya está agregada.")
+                    return
+
+            self.cost_distribution_list.append((unidad_id, pct))
+            self._refresh_cost_tree()
+            self.cb_unidad.set("")
+            self.entry_pct.delete(0, END)
+            self.entry_pct.insert(0, "0") # O dejar lo que falta para llegar a 100
+
+    def remove_cost_line(self):
+        """Elimina la línea seleccionada"""
+        sel = self.tree_costos.selection()
+        if not sel: return
+        
+        # Obtener valores de la fila
+        item = self.tree_costos.item(sel[0])
+        unidad_id_to_remove = item['values'][0]
+        
+        # Filtrar lista interna
+        self.cost_distribution_list = [
+            (uid, pct) for uid, pct in self.cost_distribution_list 
+            if uid != unidad_id_to_remove
+        ]
+        self._refresh_cost_tree()
+
+    def _refresh_cost_tree(self):
+        """Sincroniza la tabla visual con la lista interna"""
+        for i in self.tree_costos.get_children(): self.tree_costos.delete(i)
+        
+        for uid, pct in self.cost_distribution_list:
+            # Buscar nombre para mostrar
+            u_name = next((x[1] for x in self.unidades_data if x[0] == uid), "Desconocido")
+            self.tree_costos.insert("", END, values=(uid, u_name, pct))
+
+    # --- LÓGICA DE EDICIÓN ---
+
+    def _load_contract_to_form(self, id_contrato):
+            # contrato trae ahora 11 columnas fijas (0 a 10)
+            contrato, empleado, costos = self.dao.get_contract_details(id_contrato)
+            
+            # 1. Configuración Visual
+            self.selected_contract_id = id_contrato
+            self.btn_save.config(text="Actualizar Contrato", bootstyle="warning")
+            self.btn_cancel.show()
+            self.btn_delete.show()
+            
+            # 2. Empleado
+            self.current_employee_id = empleado[0]
+            self.lbl_employee_name.config(text=f"{empleado[1]} - {empleado[2]} {empleado[3]}", bootstyle="warning")
+            
+            # 3. Comboboxes (Mapeo por ID)
+            # contrato[2] = id_puesto
+            # contrato[3] = id_departamento
+            # contrato[4] = id_tipo_contrato
+            # contrato[5] = id_jornada
+            
+            puesto_txt = next((x[1] for x in self.puestos_data if x[0] == contrato[2]), "")
+            depto_txt = next((x[1] for x in self.deptos_data if x[0] == contrato[3]), "")
+            tipo_txt = next((x[1] for x in self.tipos_data if x[0] == contrato[4]), "")
+            jornada_txt = next((x[1] for x in self.jornadas_data if x[0] == contrato[5]), "")
+            
+            self.cb_puesto.set(puesto_txt)
+            self.cb_depto.set(depto_txt)
+            self.cb_tipo.set(tipo_txt)
+            self.cb_jornada.set(jornada_txt)
+
+            # 4. Datos Económicos y Vacaciones
+            # contrato[8] = Salario
+            self.entry_salario.delete(0, END)
+            self.entry_salario.insert(0, contrato[8] if contrato[8] else 0)
+
+            # contrato[10] = Saldo Inicial
+            saldo_val = contrato[10]
+            self.entry_saldo_ini.delete(0, END)
+            self.entry_saldo_ini.insert(0, saldo_val if saldo_val is not None else "0.0")
+
+            # contrato[9] = Fecha Inicio Kardex
+            fecha_k_val = contrato[9]
+            self.date_kardex.entry.delete(0, END)
+            if fecha_k_val:
+                self.date_kardex.entry.insert(0, fecha_k_val)
+
+            # 5. Fechas Contrato
+            # contrato[6] = Fecha Inicio Real
+            self.date_inicio.entry.delete(0, END)
+            self.date_inicio.entry.insert(0, contrato[6] if contrato[6] else "")
+            
+            # contrato[7] = Fecha Fin
+            self.date_fin.entry.delete(0, END)
+            if contrato[7]:
+                self.var_indefinido.set(False)
+                self.date_fin.entry.configure(state="normal")
+                self.date_fin.entry.insert(0, contrato[7])
+            else:
+                self.var_indefinido.set(True)
+                self.toggle_fecha_fin()
+                
+            # 6. Costos
+            self.cost_distribution_list = [(c[0], c[2]) for c in costos]
+            self._refresh_cost_tree()
+
+    def clear_form(self):
+        self.selected_contract_id = None
+        self.current_employee_id = None
+        self.lbl_employee_name.config(text="Seleccione un colaborador...", bootstyle="inverse")
+        self.cb_puesto.set("")
+        self.cb_depto.set("")
+        self.cb_tipo.set("")
+        self.entry_salario.delete(0, END)
+        self.cost_distribution_list = []
+        self._refresh_cost_tree()
+        self.btn_save.config(text="Guardar Contrato", bootstyle="success")
+        self.btn_cancel.hide()
+        self.btn_delete.hide()
+
+
+    def delete_current_contract(self):
+            if not self.selected_contract_id: return
+            
+            # Usamos el método nativo 'yesno'. 
+            # Es robusto y devuelve 'Yes' o 'No' sin fallos.
+            confirm = Messagebox.yesno(
+                message="¿Está seguro de eliminar este contrato?\nSe borrarán también los costos asociados.",
+                title="Confirmar Eliminación",
+                parent=self
+            )
+            
+            print(f"DEBUG: Respuesta estándar recibida: '{confirm}'") # Para que veas en consola
+
+            # En ttkbootstrap, yesno retorna el string 'Yes' si confirmas.
+            if confirm == 'Yes': 
+                ok, msg = self.dao.delete_contract(self.selected_contract_id)
+                if ok:
+                    Messagebox.show_info(msg, "Eliminado")
+                    self.clear_form()
+                    # self._load_contract_list()
+                else:
+                    Messagebox.show_error(msg, "Error")
+
+    def save_contract(self):
+            # 1. Validaciones de Integridad (Guard Clauses)
+            if not self.current_employee_id: 
+                return Messagebox.show_warning("Inasistencia seleccionar un empleado", "Advertencia")
+            if not self.cb_puesto.get(): 
+                return Messagebox.show_warning("Inasistencia seleccionar el puesto", "Advertencia")
+            if not self.cb_jornada.get():
+                return Messagebox.show_warning("Inasistencia seleccionar la jornada laboral", "Advertencia")
+            
+            # Validación de Costos 100%
+            total = sum(x[1] for x in self.cost_distribution_list)
+            if abs(total - 100) > 0.1:
+                return Messagebox.show_error(f"La distribución suma {total}%. Debe ser exactamente 100%", "Error Distribución")
+
+            try:
+                # 2. OBTENCIÓN DE IDs (Esto debe ocurrir ANTES de crear la variable 'data')
+                # -----------------------------------------------------------------------
+                id_puesto = next(x[0] for x in self.puestos_data if x[1] == self.cb_puesto.get())
+                id_depto = next(x[0] for x in self.deptos_data if x[1] == self.cb_depto.get())
+                id_tipo = next(x[0] for x in self.tipos_data if x[1] == self.cb_tipo.get())
+                id_jornada = next(x[0] for x in self.jornadas_data if x[1] == self.cb_jornada.get())
+
+                # 3. OBTENCIÓN DE VALORES DEL FORMULARIO
+                # -----------------------------------------------------------------------
+                fecha_fin = None if self.var_indefinido.get() else self.date_fin.entry.get()
+                
+                salario_txt = self.entry_salario.get()
+                salario = float(salario_txt) if salario_txt else 0.0
+
+                # Valores de Vacaciones (Nuevos)
+                f_kardex = self.date_kardex.entry.get()
+                if not f_kardex: f_kardex = None
+                
+                saldo_txt = self.entry_saldo_ini.get()
+                s_inicial = float(saldo_txt) if saldo_txt else 0.0
+
+                # 4. ARMADO DE LA TUPLA DE DATOS
+                # -----------------------------------------------------------------------
+                if self.selected_contract_id is None:
+                    # MODO CREAR (INSERT)
+                    # Orden DAO: id_emp, id_puesto, id_depto, id_tipo, id_jornada, 
+                    #            f_kardex, s_inicial, f_ini, f_fin, salario
+                    data = (
+                        self.current_employee_id, 
+                        id_puesto,   # Aquí se usaba la variable que daba error
+                        id_depto, 
+                        id_tipo, 
+                        id_jornada, 
+                        f_kardex, 
+                        s_inicial,
+                        self.date_inicio.entry.get(), 
+                        fecha_fin, 
+                        salario
+                    )
+                    ok, msg = self.dao.create_contract(data, self.cost_distribution_list)
+                else:
+                    # MODO EDITAR (UPDATE)
+                    # Orden DAO: id_puesto, id_depto, id_tipo, id_jornada, 
+                    #            f_kardex, s_inicial, f_ini, f_fin, salario, WHERE id_contrato
+                    data = (
+                        id_puesto,   # Aquí se usaba la variable que daba error
+                        id_depto, 
+                        id_tipo, 
+                        id_jornada,
+                        f_kardex, 
+                        s_inicial,
+                        self.date_inicio.entry.get(), 
+                        fecha_fin, 
+                        salario, 
+                        self.selected_contract_id
+                    )
+                    ok, msg = self.dao.update_contract(self.selected_contract_id, data, self.cost_distribution_list)
+
+                # 5. RESPUESTA
+                if ok:
+                    Messagebox.show_info(msg, "Éxito")
+                    self.clear_form()
+                    # self._load_contract_list()
+                else:
+                    Messagebox.show_error(msg, "Error de Base de Datos")
+
+            except StopIteration:
+                # Esto ocurre si el next() no encuentra el valor en la lista (Combobox con texto inválido)
+                Messagebox.show_error("Error interno: No se pudo validar el ID de un catálogo seleccionado.", "Error de Datos")
+            except ValueError:
+                Messagebox.show_error("Verifique que los campos numéricos (Salario, Saldo) sean correctos.", "Error de Formato")
+            except Exception as e:
+                Messagebox.show_error(f"Error inesperado: {e}", "Error Crítico")
+```
+
+## Archivo: views/modules/employees_view.py
+```python
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+from ttkbootstrap.dialogs import Messagebox
+from models.employee_dao import EmployeeDAO
+
+class EmployeesView(ttk.Frame):
+    def __init__(self, parent, controller=None):  
+        super().__init__(parent)
+        self.controller = controller  
+        self.dao = EmployeeDAO()
+        self.selected_id = None # ESTADO: None = Creando, Numero = Editando
+        
+        self.pack(fill=BOTH, expand=True)
+        
+        # Variables
+        self.var_codigo = ttk.StringVar()
+        self.var_dni = ttk.StringVar()
+        self.var_nombres = ttk.StringVar()
+        self.var_apellidos = ttk.StringVar()
+        self.var_fecha = ttk.StringVar()
+
+        self._create_ui()
+        self.load_table_data()
+
+    def _create_ui(self):
+        # --- Formulario ---
+        form_frame = ttk.Labelframe(self, text="Gestión de Colaborador", padding=10, bootstyle="primary")
+        form_frame.pack(fill=X, padx=10, pady=5)
+
+        # Fila 0
+        ttk.Label(form_frame, text="Código/Reloj:").grid(row=0, column=0, sticky=W, padx=5)
+        ttk.Entry(form_frame, textvariable=self.var_codigo, width=15).grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(form_frame, text="DNI:").grid(row=0, column=2, sticky=W, padx=5)
+        ttk.Entry(form_frame, textvariable=self.var_dni, width=20).grid(row=0, column=3, padx=5, pady=5)
+
+        # Fila 1
+        ttk.Label(form_frame, text="Nombres:").grid(row=1, column=0, sticky=W, padx=5)
+        ttk.Entry(form_frame, textvariable=self.var_nombres, width=30).grid(row=1, column=1, padx=5, pady=5)
+
+        ttk.Label(form_frame, text="Apellidos:").grid(row=1, column=2, sticky=W, padx=5)
+        ttk.Entry(form_frame, textvariable=self.var_apellidos, width=30).grid(row=1, column=3, padx=5, pady=5)
+
+        # Fila 2
+        ttk.Label(form_frame, text="Fecha Nacimiento:").grid(row=2, column=0, sticky=W, padx=5)
+        self.date_entry = ttk.DateEntry(form_frame, dateformat='%Y-%m-%d', startdate=None)
+        self.date_entry.entry.configure(textvariable=self.var_fecha)
+        self.date_entry.grid(row=2, column=1, padx=5, pady=5, sticky=W)
+
+        # --- BOTONES DE ACCIÓN ---
+        btn_frame = ttk.Frame(form_frame)
+        btn_frame.grid(row=2, column=3, sticky=E)
+
+        # Botón Guardar (Siempre visible)
+        self.btn_save = ttk.Button(btn_frame, text="Guardar Empleado", bootstyle="success", command=self.save_employee)
+        self.btn_save.pack(side=LEFT, padx=5)
+
+        # Botón Eliminar (Oculto por defecto, solo visible al editar)
+        self.btn_delete = ttk.Button(btn_frame, text="Eliminar", bootstyle="danger", command=self.delete_current_employee)
+        # No hacemos pack aquí, se hace dinámicamente en on_row_double_click
+
+        # Botón Cancelar (Oculto por defecto)
+        self.btn_cancel = ttk.Button(btn_frame, text="Cancelar", bootstyle="secondary", command=self.clear_form)
+        # No hacemos pack aquí
+
+        # --- Tabla ---
+        table_frame = ttk.Frame(self, padding=10)
+        table_frame.pack(fill=BOTH, expand=True)
+
+        columns = ("id", "codigo", "dni", "nombres", "apellidos", "nacimiento")
+        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", bootstyle="info")
+        
+        # Configurar columnas
+        self.tree.heading("id", text="ID")
+        self.tree.column("id", width=0, stretch=False) # Oculto visualmente
+        self.tree.heading("codigo", text="Cód.")
+        self.tree.column("codigo", width=80)
+        self.tree.heading("dni", text="DNI")
+        self.tree.column("dni", width=120)
+        self.tree.heading("nombres", text="Nombres")
+        self.tree.heading("apellidos", text="Apellidos")
+        self.tree.heading("nacimiento", text="F. Nacimiento")
+        
+        self.tree.pack(side=LEFT, fill=BOTH, expand=True)
+        
+        # Scrollbar
+        sb = ttk.Scrollbar(table_frame, orient=VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscroll=sb.set)
+        sb.pack(side=RIGHT, fill=Y)
+
+        # EVENTO DE SELECCIÓN
+        self.tree.bind("<Double-1>", self.on_row_double_click)
+
+    def load_table_data(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        rows = self.dao.get_all()
+        for row in rows:
+            self.tree.insert("", END, values=row)
+
+    def on_row_double_click(self, event):
+        """Carga los datos de la fila en el formulario para editar"""
+        selection = self.tree.selection()
+        if not selection: return
+
+        # Obtener datos de la fila
+        item = self.tree.item(selection[0])
+        values = item['values']
+        
+        # values = [id, codigo, dni, nombres, apellidos, fecha]
+        self.selected_id = values[0]
+        self.var_codigo.set(values[1])
+        self.var_dni.set(values[2])
+        self.var_nombres.set(values[3])
+        self.var_apellidos.set(values[4])
+        self.var_fecha.set(values[5])
+        
+        # Cambiar estado visual a MODO EDICIÓN
+        self.btn_save.configure(text="Actualizar Empleado", bootstyle="warning")
+        
+        # Mostrar botones de soporte
+        self.btn_cancel.pack(side=LEFT, padx=5)
+        self.btn_delete.pack(side=LEFT, padx=5) # <--- AHORA APARECE EL ROJO
+
+    def clear_form(self):
+        """Reinicia el formulario al estado 'Crear'"""
+        self.selected_id = None
+        self.var_codigo.set("")
+        self.var_dni.set("")
+        self.var_nombres.set("")
+        self.var_apellidos.set("")
+        
+        # Restaurar estado visual a MODO CREAR
+        self.btn_save.configure(text="Guardar Empleado", bootstyle="success")
+        
+        # Ocultar botones de soporte
+        self.btn_cancel.pack_forget()
+        self.btn_delete.pack_forget()
+        
+        self.tree.selection_remove(self.tree.selection())
+
+    def save_employee(self):
+        # 1. Validaciones
+        if not self.var_codigo.get() or not self.var_nombres.get():
+            Messagebox.show_error("Código y Nombres son obligatorios.", "Error")
+            return
+        
+        # Conversión a Mayúsculas
+        nombres = self.var_nombres.get().upper().strip()
+        apellidos = self.var_apellidos.get().upper().strip()
+        
+        self.var_nombres.set(nombres)
+        self.var_apellidos.set(apellidos)
+
+        # 2. Decidir acción
+        if self.selected_id is None:
+            # CREATE
+            success, msg = self.dao.insert(
+                self.var_codigo.get().strip(),
+                self.var_dni.get().strip(),
+                nombres,
+                apellidos,
+                self.var_fecha.get()
+            )
+        else:
+            # UPDATE
+            success, msg = self.dao.update(
+                self.selected_id,
+                self.var_codigo.get().strip(),
+                self.var_dni.get().strip(),
+                nombres,
+                apellidos,
+                self.var_fecha.get()
+            )
+
+        # 3. Respuesta
+        if success:
+            Messagebox.show_info(msg, "Éxito")
+            self.clear_form()
+            self.load_table_data()
+        else:
+            Messagebox.show_error(msg, "Error")
+
+    def delete_current_employee(self):
+        """Lógica para eliminar el empleado seleccionado"""
+        if not self.selected_id: return
+
+        # Confirmación
+        confirm = Messagebox.yesno(
+            message="¿Está seguro que desea eliminar este empleado permanentemente?\nEsta acción es irreversible.",
+            title="Confirmar Eliminación",
+            alert=True
+        )
+        
+        if confirm == 'Yes':
+            success, message = self.dao.delete_employee(self.selected_id)
+            
+            if success:
+                Messagebox.show_info(message, "Eliminado")
+                self.clear_form()
+                self.load_table_data()
+            else:
+                # Si falla (ej: tiene contratos), mostramos el error del DAO
+                Messagebox.show_error(message, "No se pudo eliminar")
+```
+
+## Archivo: views/styles.py
+```python
+"""
+Definición de constantes de estilo para la aplicación.
+Se usa junto con los temas de ttkbootstrap.
+"""
+
+# Fuentes
+FONT_H1 = ("Segoe UI", 24, "bold")
+FONT_H2 = ("Segoe UI", 16, "bold")
+FONT_BODY = ("Segoe UI", 11)
+FONT_SMALL = ("Segoe UI", 9)
+
+# Tamaños y Paddings
+PAD_DEFAULT = 10
+PAD_SMALL = 5
+SIDEBAR_WIDTH = 250
+
+# Colores (Opcional, pues ttkbootstrap maneja temas, pero útil para customizaciones)
+COLOR_ERROR = "#dc3545"
+COLOR_SUCCESS = "#198754"
+```
