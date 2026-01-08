@@ -4,6 +4,29 @@ from config.db_connection import DatabaseConnection
 class CatalogsDAO:
     def __init__(self):
         self.db = DatabaseConnection()
+        self._check_and_migrate_puestos_structure()
+
+    def _check_and_migrate_puestos_structure(self):
+        """
+        Verifica si cat_puestos tiene id_departamento. Si no, lo crea.
+        Esto es necesario para la refactorización arquitectónica.
+        """
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.cursor()
+            # Truco para ver columnas
+            cursor.execute("PRAGMA table_info(cat_puestos)")
+            columns = [info[1] for info in cursor.fetchall()]
+            
+            if "id_departamento" not in columns:
+                print("⚠ MIGRACIÓN DETECTADA: Agregando 'id_departamento' a 'cat_puestos'...")
+                cursor.execute("ALTER TABLE cat_puestos ADD COLUMN id_departamento INTEGER REFERENCES cat_departamentos(id_departamento)")
+                conn.commit()
+                print("✅ Migración exitosa. Ahora los puestos están vinculados a departamentos.")
+        except Exception as e:
+            print(f"Error en migración automática: {e}")
+        finally:
+            conn.close()
 
     # --- GENÉRICOS DE LECTURA ---
     def get_departamentos(self):
@@ -20,6 +43,7 @@ class CatalogsDAO:
 
     def get_tipos_contrato(self):
         return self._get_all("cat_tipos_contrato", "id_tipo_contrato", "nombre")
+
 
     def get_unidades_produccion(self):
         conn = self.db.get_connection()
@@ -87,6 +111,7 @@ class CatalogsDAO:
         conn.close()
         return rows
 
+
     def get_puestos_jefatura_combo(self):
         conn = self.db.get_connection()
         cursor = conn.cursor()
@@ -95,44 +120,45 @@ class CatalogsDAO:
         conn.close()
         return rows
 
-    # --- PUESTOS (CORREGIDO DESACOPLE) ---
-    def get_puestos_detailed(self): # Renombrado para diferenciar del simple, úsalo en la tabla
-        """
-        Retorna datos enriquecidos.
-        ### CORRECCIÓN: Se eliminó id_departamento y el JOIN.
-        Para mantener compatibilidad con tu vista (índices), enviamos '---' y None en lugar de deptos.
-        """
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        query = """
-            SELECT 
-                p.id_puesto,                    -- 0
-                p.nombre_puesto,                -- 1
-                '---' as depto_nombre,          -- 2 (Placeholder visual, ya no hay depto directo)
-                CASE WHEN p.tiene_personal_cargo = 1 THEN 'Sí' ELSE 'No' END as es_jefe, -- 3
-                COALESCE(jefe.nombre_puesto, '---') as reporta_a, -- 4
-                COALESCE(gp.codigo || ' - ' || gp.descripcion, '---') as grupo_perc, -- 5
-                
-                -- RAW DATA
-                NULL as id_departamento,        -- 6 (Placeholder null para no romper índices)
-                p.tiene_personal_cargo,         -- 7
-                p.id_puesto_jefe,               -- 8
-                p.id_grupo_perc                 -- 9
-            FROM cat_puestos p
-            LEFT JOIN cat_puestos jefe ON p.id_puesto_jefe = jefe.id_puesto
-            LEFT JOIN cat_grupos_perc gp ON p.id_grupo_perc = gp.id_grupo
-            ORDER BY p.nombre_puesto
-        """
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        conn.close()
-        return rows
-    
-    # IMPORTANTE: Sobreescribimos el get_puestos principal si tu vista llama a este para la tabla
+
+    # --- PUESTOS ---
+    def get_puestos_detailed(self): 
+            """
+            Retorna datos enriquecidos.
+            AHORA SÍ hacemos JOIN con Departamentos para mostrar la realidad.
+            """
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            query = """
+                SELECT 
+                    p.id_puesto,                    -- 0
+                    p.nombre_puesto,                -- 1
+                    COALESCE(d.nombre, 'Sin Asignar') as depto_nombre, -- 2 (Dato Real)
+                    CASE WHEN p.tiene_personal_cargo = 1 THEN 'Sí' ELSE 'No' END as es_jefe, -- 3
+                    COALESCE(jefe.nombre_puesto, '---') as reporta_a, -- 4
+                    COALESCE(gp.codigo || ' - ' || gp.descripcion, '---') as grupo_perc, -- 5
+                    
+                    -- RAW DATA para edición
+                    p.id_departamento,              -- 6 (Nuevo campo clave)
+                    p.tiene_personal_cargo,         -- 7
+                    p.id_puesto_jefe,               -- 8
+                    p.id_grupo_perc                 -- 9
+                FROM cat_puestos p
+                LEFT JOIN cat_departamentos d ON p.id_departamento = d.id_departamento -- JOIN NUEVO
+                LEFT JOIN cat_puestos jefe ON p.id_puesto_jefe = jefe.id_puesto
+                LEFT JOIN cat_grupos_perc gp ON p.id_grupo_perc = gp.id_grupo
+                ORDER BY d.nombre, p.nombre_puesto
+            """
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            conn.close()
+            return rows
+        
+    # Sobreescritura vital
     get_puestos = get_puestos_detailed 
 
     def crud_puesto(self, action, id_item=None, nombre=None, 
-                    id_depto=None,  # Se mantiene el argumento para no romper la firma, pero se ignora
+                    id_depto=None,  # AHORA SÍ SE USA ESTE PARÁMETRO
                     tiene_personal=0, id_jefe=None, id_grupo_perc=None, id_tipo=1):
         
         conn = self.db.get_connection()
@@ -142,15 +168,15 @@ class CatalogsDAO:
             # Sanitización
             if not id_jefe: id_jefe = None
             if not id_grupo_perc: id_grupo_perc = None
+            if not id_depto: id_depto = None # Importante
             tiene_personal = 1 if tiene_personal else 0
 
-            ### CORRECCIÓN: Eliminado id_departamento del INSERT y UPDATE
             if action == 'INSERT':
                 cursor.execute("""
                     INSERT INTO cat_puestos 
-                    (nombre_puesto, tiene_personal_cargo, id_puesto_jefe, id_grupo_perc, id_tipo_puesto) 
-                    VALUES (?, ?, ?, ?, ?)
-                """, (nombre, tiene_personal, id_jefe, id_grupo_perc, 1))
+                    (nombre_puesto, id_departamento, tiene_personal_cargo, id_puesto_jefe, id_grupo_perc, id_tipo_puesto) 
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (nombre, id_depto, tiene_personal, id_jefe, id_grupo_perc, 1))
                 
             elif action == 'UPDATE':
                 if id_jefe and id_item and int(id_jefe) == int(id_item):
@@ -158,9 +184,9 @@ class CatalogsDAO:
 
                 cursor.execute("""
                     UPDATE cat_puestos 
-                    SET nombre_puesto=?, tiene_personal_cargo=?, id_puesto_jefe=?, id_grupo_perc=? 
+                    SET nombre_puesto=?, id_departamento=?, tiene_personal_cargo=?, id_puesto_jefe=?, id_grupo_perc=? 
                     WHERE id_puesto=?
-                """, (nombre, tiene_personal, id_jefe, id_grupo_perc, id_item))
+                """, (nombre, id_depto, tiene_personal, id_jefe, id_grupo_perc, id_item))
                 
             elif action == 'DELETE':
                 cursor.execute("DELETE FROM cat_puestos WHERE id_puesto=?", (id_item,))
@@ -168,7 +194,7 @@ class CatalogsDAO:
             conn.commit()
             return True, "Operación exitosa"
         except sqlite3.IntegrityError:
-            return False, "Error de Integridad."
+            return False, "Error de Integridad (Probablemente el puesto está en uso)."
         except Exception as e:
             return False, f"Error: {e}"
         finally:
@@ -176,11 +202,9 @@ class CatalogsDAO:
 
 # --- CRUD CATEGORÍAS INASISTENCIA  ---
     def get_categorias_inasistencia(self):
-        # Retorna lista completa para la tabla de configuración
         return self._get_all("cat_categorias_inasistencia", "id_categoria", "nombre_categoria")
 
     def get_categorias_combo(self):
-        """Retorna lista (id, nombre) para llenar el Combobox al crear un Tipo"""
         conn = self.db.get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT id_categoria, nombre_categoria FROM cat_categorias_inasistencia ORDER BY nombre_categoria")
@@ -201,7 +225,7 @@ class CatalogsDAO:
             conn.commit()
             return True, "Operación exitosa"
         except sqlite3.IntegrityError:
-            return False, "No se puede eliminar: Existen Tipos de Inasistencia vinculados a esta categoría."
+            return False, "No se puede eliminar: Existen Tipos de Inasistencia vinculados."
         except Exception as e:
             return False, f"Error: {e}"
         finally:
@@ -209,23 +233,13 @@ class CatalogsDAO:
 
     # --- CRUD TIPOS INASISTENCIA (CORREGIDO CON JOIN Y REMUNERADO) ---
     def get_tipos_inasistencia(self):
-        """
-        Retorna datos enriquecidos uniendo con Categorías.
-        """
         conn = self.db.get_connection()
         cursor = conn.cursor()
         query = """
             SELECT 
-                t.id_tipo, 
-                t.nombre_tipo, 
-                COALESCE(c.nombre_categoria, 'Sin Categoría') as nombre_categoria, -- JOIN Real
-                CASE 
-                    WHEN t.cuenta_afectada = 'ORDINARIA' THEN 'Sí' 
-                    ELSE 'No' 
-                END as descuenta_saldo,
-                t.id_categoria,      -- Raw Index 4
-                t.cuenta_afectada,   -- Raw Index 5
-                t.remunerado         -- Raw Index 6
+                t.id_tipo, t.nombre_tipo, COALESCE(c.nombre_categoria, 'Sin Categoría'), 
+                CASE WHEN t.cuenta_afectada = 'ORDINARIA' THEN 'Sí' ELSE 'No' END,
+                t.id_categoria, t.cuenta_afectada, t.remunerado
             FROM cat_tipos_inasistencia t
             LEFT JOIN cat_categorias_inasistencia c ON t.id_categoria = c.id_categoria
             ORDER BY c.nombre_categoria, t.nombre_tipo
@@ -239,27 +253,14 @@ class CatalogsDAO:
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
-            
-            # Sanitización
             remunerado = int(remunerado) if remunerado else 0
-            if not id_cat: id_cat = 1 # Fallback a categoría 1 si viene nulo
-
+            if not id_cat: id_cat = 1 
             if action == 'INSERT':
-                cursor.execute("""
-                    INSERT INTO cat_tipos_inasistencia (nombre_tipo, id_categoria, cuenta_afectada, remunerado) 
-                    VALUES (?, ?, ?, ?)
-                """, (nombre, id_cat, cuenta_afectada, remunerado))
-            
+                cursor.execute("INSERT INTO cat_tipos_inasistencia (nombre_tipo, id_categoria, cuenta_afectada, remunerado) VALUES (?, ?, ?, ?)", (nombre, id_cat, cuenta_afectada, remunerado))
             elif action == 'UPDATE':
-                cursor.execute("""
-                    UPDATE cat_tipos_inasistencia 
-                    SET nombre_tipo=?, id_categoria=?, cuenta_afectada=?, remunerado=? 
-                    WHERE id_tipo=?
-                """, (nombre, id_cat, cuenta_afectada, remunerado, id_item))
-            
+                cursor.execute("UPDATE cat_tipos_inasistencia SET nombre_tipo=?, id_categoria=?, cuenta_afectada=?, remunerado=? WHERE id_tipo=?", (nombre, id_cat, cuenta_afectada, remunerado, id_item))
             elif action == 'DELETE':
                 cursor.execute("DELETE FROM cat_tipos_inasistencia WHERE id_tipo=?", (id_item,))
-            
             conn.commit()
             return True, "Operación exitosa"
         except Exception as e:
@@ -288,12 +289,10 @@ class CatalogsDAO:
             conn.close()
 
 
-
     # --- NUEVO: CRUD DÍAS FESTIVOS ---
     def get_dias_festivos(self):
         conn = self.db.get_connection()
         cursor = conn.cursor()
-        # Ordenamos por fecha descendente para ver los próximos o recientes
         cursor.execute("SELECT id_feriado, fecha, descripcion FROM dias_festivos ORDER BY fecha DESC")
         rows = cursor.fetchall()
         conn.close()
@@ -320,7 +319,6 @@ class CatalogsDAO:
 
     # --- MODIFICADO: CRUD JORNADAS (Agregar campo aplica_feriados) ---
     def get_jornadas(self):
-        # Ahora retornamos 4 columnas
         conn = self.db.get_connection()
         cursor = conn.cursor()
         cursor.execute("""
@@ -337,7 +335,7 @@ class CatalogsDAO:
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
-            aplica_feriados = 1 if aplica_feriados else 0 # Asegurar int
+            aplica_feriados = 1 if aplica_feriados else 0 
 
             if action == 'INSERT':
                 cursor.execute("INSERT INTO cat_jornadas (nombre, horas_diarias, aplica_feriados) VALUES (?, ?, ?)", 
@@ -356,39 +354,22 @@ class CatalogsDAO:
             
 # --- CRUD REGLAS VACACIONES (CORREGIDO FINAL) ---
     def get_reglas_vacaciones(self):
-        """
-        Recupera la tabla de antigüedad.
-        CORRECCIÓN: Eliminada referencia a 'id_tipo_inasistencia'.
-        Solo trae: ID, Años, Días.
-        """
         conn = self.db.get_connection()
         cursor = conn.cursor()
-        query = """
-            SELECT 
-                id_regla, 
-                anios_antiguedad,
-                dias_otorgar
-            FROM cat_reglas_vacaciones 
-            ORDER BY anios_antiguedad
-        """
+        query = "SELECT id_regla, anios_antiguedad, dias_otorgar FROM cat_reglas_vacaciones ORDER BY anios_antiguedad"
         cursor.execute(query)
         rows = cursor.fetchall()
         conn.close()
         return rows
 
     def crud_regla_vacacion(self, action, id_item=None, anios=None, dias=None):
-        """
-        CORRECCIÓN: Eliminado parámetro 'id_tipo_inasistencia' de la firma y del SQL.
-        """
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
             if action == 'INSERT':
-                cursor.execute("INSERT INTO cat_reglas_vacaciones (anios_antiguedad, dias_otorgar) VALUES (?, ?)", 
-                               (anios, dias))
+                cursor.execute("INSERT INTO cat_reglas_vacaciones (anios_antiguedad, dias_otorgar) VALUES (?, ?)", (anios, dias))
             elif action == 'UPDATE':
-                cursor.execute("UPDATE cat_reglas_vacaciones SET anios_antiguedad=?, dias_otorgar=? WHERE id_regla=?", 
-                               (anios, dias, id_item))
+                cursor.execute("UPDATE cat_reglas_vacaciones SET anios_antiguedad=?, dias_otorgar=? WHERE id_regla=?", (anios, dias, id_item))
             elif action == 'DELETE':
                 cursor.execute("DELETE FROM cat_reglas_vacaciones WHERE id_regla=?", (id_item,))
             conn.commit()
@@ -397,6 +378,8 @@ class CatalogsDAO:
             return False, str(e)
         finally:
             conn.close()
+
+
     def get_only_vacation_types_combo(self):
         conn = self.db.get_connection()
         cursor = conn.cursor()
