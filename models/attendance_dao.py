@@ -97,94 +97,106 @@ class AttendanceDAO:
         return round(saldo, 2)
 
     def insert_inasistencia(self, id_con, id_tipo, f_ini, f_fin, es_horas, h_ini, h_fin, detalle, dias_manual=None):
-        conn = self.db.get_connection()
-        try:
-            cursor = conn.cursor()
-            
-            # 1. Obtener jornada
-            cursor.execute("""
-                SELECT j.horas_diarias FROM contratos c 
-                JOIN cat_jornadas j ON c.id_jornada = j.id_jornada 
-                WHERE c.id_contrato = ?
-            """, (id_con,))
-            res_jornada = cursor.fetchone()
-            horas_jornada = res_jornada[0] if res_jornada else 8
-            
-            # 2. CÁLCULO DE DÍAS
-            dias_calculados = TimeCalculator.calculate_duration(
-                f_ini, f_fin, es_horas, h_ini, h_fin, horas_jornada
-            )
-
-            # Usar manual si existe
-            if dias_manual is not None and dias_manual != "":
-                try:
-                    dias_finales = float(dias_manual)
-                except ValueError:
-                    dias_finales = dias_calculados 
-            else:
-                dias_finales = dias_calculados
-
-            # ---------------------------------------------------------------
-            # 3. CÁLCULO DE HORAS (CORREGIDO)
-            # ---------------------------------------------------------------
-            # Aquí estaba el error. No dependemos de dias_finales para las horas.
-            # Calculamos la diferencia real entre h_ini y h_fin.
-            
-            if es_horas:
-                # Formato esperado HH:MM
-                t_ini = datetime.strptime(h_ini, '%H:%M')
-                t_fin = datetime.strptime(h_fin, '%H:%M')
+            conn = self.db.get_connection()
+            try:
+                cursor = conn.cursor()
                 
-                # Manejo de turno nocturno (ej: 23:00 a 01:00)
-                if t_fin < t_ini:
-                    t_fin += timedelta(days=1)
+                # 1. Obtener jornada actual del contrato para cálculos
+                cursor.execute("""
+                    SELECT COALESCE(j.horas_diarias, 8) 
+                    FROM contratos c 
+                    LEFT JOIN cat_jornadas j ON c.id_jornada = j.id_jornada 
+                    WHERE c.id_contrato = ?
+                """, (id_con,))
+                res_jornada = cursor.fetchone()
+                horas_jornada = float(res_jornada[0]) if res_jornada else 8.0
                 
-                delta = t_fin - t_ini
-                # Convertimos segundos a horas decimales
-                horas_totales = delta.total_seconds() / 3600.0
-            else:
-                # Si es por días completos, entonces sí usamos la multiplicación
-                horas_totales = dias_finales * horas_jornada
+                # 2. CÁLCULO DE DÍAS (Lógica de TimeCalculator)
+                dias_calculados = TimeCalculator.calculate_duration(
+                    f_ini, f_fin, es_horas, h_ini, h_fin, horas_jornada
+                )
 
-            # 4. INSERTAR 
-            query_main = """
-                INSERT INTO inasistencias 
-                (id_contrato, id_tipo, fecha_inicio_real, fecha_fin_real, 
-                horas_totales, dias_descontar, comentario, es_por_horas) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """
-            # IMPORTANTE: Asegúrate de guardar el flag es_por_horas (1 o 0)
-            flag_horas = 1 if es_horas else 0
-            
-            cursor.execute(query_main, (
-                id_con, id_tipo, f_ini, f_fin, 
-                horas_totales, dias_finales, detalle, flag_horas
-            ))
-            id_inasistencia = cursor.lastrowid
-            
-            # 5. KARDEX
-            cursor.execute("SELECT cuenta_afectada FROM cat_tipos_inasistencia WHERE id_tipo = ?", (id_tipo,))
-            res = cursor.fetchone()
-            cuenta_afectada = res[0] if res else 'NINGUNA'
-            
-            if cuenta_afectada == 'ORDINARIA':
-                query_kardex = """
-                    INSERT INTO kardex_vacaciones 
-                    (id_contrato, fecha_movimiento, tipo_movimiento, dias, id_referencia, observacion, cuenta_tipo)
-                    VALUES (?, CURRENT_DATE, 'GOCE', ?, ?, ?, 'ORDINARIA')
+                # Usar valor manual si el usuario lo editó en la UI
+                if dias_manual is not None and str(dias_manual).strip() != "":
+                    try:
+                        dias_finales = float(dias_manual)
+                    except ValueError:
+                        dias_finales = dias_calculados 
+                else:
+                    dias_finales = dias_calculados
+
+                # 3. CÁLCULO DE HORAS Y DEFINICIÓN DE CAMPOS DE TIEMPO
+                horas_totales = 0.0
+                db_h_ini = None
+                db_h_fin = None
+
+                if es_horas:
+                    # Caso: Permiso por Horas
+                    # Guardamos los rangos exactos y calculamos la duración
+                    db_h_ini = h_ini
+                    db_h_fin = h_fin
+                    
+                    t_ini = datetime.strptime(h_ini, '%H:%M')
+                    t_fin = datetime.strptime(h_fin, '%H:%M')
+                    
+                    # Manejo de turno nocturno (ej: 23:00 a 01:00 implica día siguiente)
+                    if t_fin < t_ini:
+                        t_fin += timedelta(days=1)
+                    
+                    delta = t_fin - t_ini
+                    horas_totales = delta.total_seconds() / 3600.0
+                else:
+                    # Caso: Permiso por Días
+                    # Horas inicio/fin van nulas, horas totales = días * jornada
+                    db_h_ini = None 
+                    db_h_fin = None
+                    horas_totales = dias_finales * horas_jornada
+
+                # 4. INSERTAR (CORREGIDO: Ahora incluye hora_inicio y hora_fin)
+                query_main = """
+                    INSERT INTO inasistencias 
+                    (id_contrato, id_tipo, fecha_inicio_real, fecha_fin_real, 
+                    horas_totales, dias_descontar, hora_inicio, hora_fin, 
+                    comentario, es_por_horas) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
-                dias_kardex = -1 * abs(dias_finales) 
-                obs = f"Inasistencia #{id_inasistencia}: {detalle}"
-                cursor.execute(query_kardex, (id_con, dias_kardex, id_inasistencia, obs))
+                
+                flag_horas = 1 if es_horas else 0
+                
+                cursor.execute(query_main, (
+                    id_con, id_tipo, f_ini, f_fin, 
+                    horas_totales, dias_finales, db_h_ini, db_h_fin, 
+                    detalle, flag_horas
+                ))
+                
+                # Recuperar ID para referencia en Kardex
+                id_inasistencia = cursor.lastrowid
+                
+                # 5. ACTUALIZACIÓN DE KARDEX (Si aplica)
+                cursor.execute("SELECT cuenta_afectada FROM cat_tipos_inasistencia WHERE id_tipo = ?", (id_tipo,))
+                res = cursor.fetchone()
+                cuenta_afectada = res[0] if res else 'NINGUNA'
+                
+                if cuenta_afectada == 'ORDINARIA':
+                    query_kardex = """
+                        INSERT INTO kardex_vacaciones 
+                        (id_contrato, fecha_movimiento, tipo_movimiento, dias, id_referencia, observacion, cuenta_tipo)
+                        VALUES (?, CURRENT_DATE, 'GOCE', ?, ?, ?, 'ORDINARIA')
+                    """
+                    # Se descuenta en negativo
+                    dias_kardex = -1 * abs(dias_finales) 
+                    obs = f"Inasistencia #{id_inasistencia}: {detalle} ({horas_totales:.2f} hrs)"
+                    cursor.execute(query_kardex, (id_con, dias_kardex, id_inasistencia, obs))
 
-            conn.commit()
-            return True, "Registro guardado y saldo actualizado."
-        except Exception as e:
-            conn.rollback()
-            print(f"DEBUG ERROR INASISTENCIA: {e}") 
-            return False, f"Error al guardar: {e}"
-        finally:
-            conn.close()
+                conn.commit()
+                return True, "Registro guardado exitosamente."
+                
+            except Exception as e:
+                conn.rollback()
+                print(f"DEBUG ERROR INASISTENCIA: {e}") 
+                return False, f"Error al guardar: {e}"
+            finally:
+                conn.close()
 
     def delete_inasistencia(self, id_inasistencia):
         conn = self.db.get_connection()
