@@ -122,3 +122,50 @@ class EmployeeDAO:
                 return False, f"Error de base de datos: {str(e)}"
             finally:
                 conn.close()
+
+# models/employee_dao.py (Reemplaza el método get_org_chart_data)
+
+    def get_org_chart_data(self):
+        """
+        Obtiene la jerarquía enriquecida con Departamento y Nombre del Puesto Jefe.
+        """
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        
+        # EXPLICACIÓN DE CAMBIOS:
+        # 1. JOIN cat_departamentos d: Para obtener nombre del departamento.
+        # 2. LEFT JOIN cat_puestos pj: (Self Join) Para obtener el NOMBRE del puesto jefe, no solo el ID.
+        query = """
+            SELECT 
+                p.id_puesto,
+                p.nombre_puesto,
+                p.id_puesto_jefe,
+                e.nombres || ' ' || e.apellidos as nombre_completo,
+                CASE WHEN c.id_contrato IS NULL THEN 1 ELSE 0 END as es_vacante,
+                c.id_contrato,
+                d.nombre as nombre_depto,
+                pj.nombre_puesto as nombre_puesto_jefe
+            FROM cat_puestos p
+            LEFT JOIN contratos c ON p.id_puesto = c.id_puesto AND c.activo = 1
+            LEFT JOIN empleados e ON c.id_empleado = e.id_empleado
+            LEFT JOIN cat_departamentos d ON p.id_departamento = d.id_departamento
+            LEFT JOIN cat_puestos pj ON p.id_puesto_jefe = pj.id_puesto
+            ORDER BY p.id_puesto_jefe ASC, p.nombre_puesto ASC
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        result = []
+        for r in rows:
+            result.append({
+                "id": r[0],
+                "puesto": r[1],
+                "parent_id": r[2], # ID del Jefe (para armar el árbol)
+                "empleado": r[3] if r[3] else "--- VACANTE ---",
+                "vacante": r[4],
+                "id_contrato": r[5],
+                "departamento": r[6] if r[6] else "Sin Depto",
+                "puesto_jefe": r[7] if r[7] else "Sin Jefe Asignado" # Nombre del Puesto Jefe
+            })
+        return result
